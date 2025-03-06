@@ -122,9 +122,13 @@ def check_watchdog():
     """Überprüft regelmäßig den Status des Watchdogs und sendet eine Benachrichtigung, wenn keine neue Nachricht empfangen wurde."""
     global watchdog_state
 
+    # Variable für das tägliche Status-Update hinzufügen
+    last_status_notification = time.time()
+
     while True:
         current_time = time.time()
         time_since_last = current_time - watchdog_state["last_watchdog_time"]
+        time_since_last_notification = current_time - last_status_notification
 
         # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
         if time_since_last > watchdog_timeout:
@@ -143,8 +147,8 @@ def check_watchdog():
 
         # Sendet regelmäßig einen Status, wenn alles okay ist (einmal am Tag)
         elif (
-            watchdog_state["status"] == "ok" and time_since_last % 86400 < 60
-        ):  # ~einmal pro Tag
+            watchdog_state["status"] == "ok" and time_since_last_notification >= 86400
+        ):  # Wirklich nur einmal pro Tag
             message = (
                 f"*(INFO) Watchdog status - OK*\n"
                 f"Description: Alertmanager Watchdog messages are being received normally.\n"
@@ -152,6 +156,9 @@ def check_watchdog():
                 f"Summary: Alerting pipeline is functioning correctly"
             )
             send_google_chat_notification(message)
+            last_status_notification = (
+                current_time  # Zeit der letzten Benachrichtigung aktualisieren
+            )
 
         # Verzögerung für die nächste Überprüfung (1/10 des Timeout-Werts, aber mindestens 30 Sekunden)
         sleep_time = max(30, int(watchdog_timeout / 10))
