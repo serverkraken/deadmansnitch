@@ -3,3 +3,4 @@
 app/watchdog_state.json
 **/*.pyc
 **/__pycache__
+data

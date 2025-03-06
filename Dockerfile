@@ -1,50 +1,62 @@
-FROM python:3.13-slim
+FROM python:3.12-slim
 
-# Labels hinzufügen
-LABEL maintainer="merin80" \
-  description="Alertmanager Watchdog Service" \
-  version="1.0.0"
+# Create non-root user for security
+RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
 
-# Arbeitsverzeichnis setzen
+# Set work directory
 WORKDIR /app
 
-# Pakete installieren
-RUN apt-get update && \
-  apt-get install -y --no-install-recommends \
-  curl \
-  ca-certificates && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
+# Create requirements.txt file
+RUN echo 'Flask==2.3.3' > requirements.txt && \
+  echo 'Werkzeug==2.3.7' >> requirements.txt && \
+  echo 'gunicorn==21.2.0' >> requirements.txt && \
+  echo 'requests==2.31.0' >> requirements.txt && \
+  echo 'python-dateutil==2.8.2' >> requirements.txt && \
+  echo 'pytest==7.4.2' >> requirements.txt && \
+  echo 'pytest-cov==4.1.0' >> requirements.txt
 
-# Python-Abhängigkeiten kopieren und installieren
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  curl gcc python3-dev \
+  && pip install --no-cache-dir -r requirements.txt \
+  && apt-get purge -y --auto-remove gcc python3-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Anwendungscode kopieren
-COPY app/ ./app/
-COPY gunicorn_config.py .
-COPY docker/entrypoint.sh .
+# Copy application code
+COPY app/ /app/app/
+COPY gunicorn_config.py /app/
 
-# Datenverzeichnis erstellen
-RUN mkdir -p /data && chmod 777 /data
+# Create data directory and set permissions
+RUN mkdir -p /app/data && \
+  chown -R deadmansnitch:deadmansnitch /app/data
 
-# Das Entrypoint-Skript ausführbar machen
-RUN chmod +x entrypoint.sh
+# Set volume for persistent data
+VOLUME ["/app/data"]
 
-# Port freigeben
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONUNBUFFERED=1 \
+  LOG_LEVEL=info \
+  DATA_DIR=/app/data \
+  WATCHDOG_TIMEOUT=3600 \
+  EXPECTED_ALERTNAME=Watchdog \
+  ALERT_RESEND_INTERVAL=21600
+
+# Expose port
 EXPOSE 5001
 
-# Umgebungsvariablen setzen
-ENV PYTHONUNBUFFERED=1 \
-  PYTHONDONTWRITEBYTECODE=1 \
-  DATA_DIR=/data \
-  LOG_LEVEL=info \
-  WATCHDOG_TIMEOUT=3600 \
-  EXPECTED_ALERTNAME=Watchdog
+# Switch to non-root user
+USER deadmansnitch
 
-# Healthcheck konfigurieren
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:5001/health || exit 1
 
-# Entrypoint setzen
-ENTRYPOINT ["./entrypoint.sh"]
+# Add metadata labels
+LABEL maintainer="ServerKraken Team" \
+  version="2.0" \
+  description="Deadman's Snitch - A service that monitors for the presence of Prometheus watchdog alerts" \
+  created="2025-03-06"
+
+# Run gunicorn with our config
+CMD ["gunicorn", "-c", "gunicorn_config.py", "app:create_app()"]
