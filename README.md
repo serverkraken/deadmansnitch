@@ -46,7 +46,7 @@ Deadmansnitch is a monitoring tool designed to ensure that your scheduled tasks 
           - DATA_DIR=/app/data
           - GOOGLE_CHAT_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/...
         ports:
-          - "5000:5000"
+          - "5001:5001"
         volumes:
           - ./data:/app/data
         restart: unless-stopped
@@ -58,7 +58,7 @@ Deadmansnitch is a monitoring tool designed to ensure that your scheduled tasks 
     docker-compose up -d
     ```
 
-3. The app should now be running on `http://localhost:5000`.
+3. The app should now be running on `http://localhost:5001`.
 
 ### Prometheus Setup
 
