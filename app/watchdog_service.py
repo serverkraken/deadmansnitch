@@ -5,15 +5,21 @@ import json
 import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
-from threading import Thread
+from threading import Thread, Lock
 
-# Logger konfigurieren
+# Logger konfigurieren mit dem Wert aus der Umgebungsvariable
+log_level_name = os.getenv("LOG_LEVEL", "DEBUG").upper()
+log_level = getattr(
+    logging, log_level_name, logging.DEBUG
+)  # Fallback auf DEBUG wenn ungültig
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger("watchdog_service")
+logger.info(f"Logger initialized with level: {log_level_name}")
 
 # Flask initialisieren
 webapp = Flask(__name__)
@@ -27,6 +33,9 @@ google_chat_webhook_url = os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
 watchdog_timeout = int(os.getenv("WATCHDOG_TIMEOUT", 3600))  # Default auf 1 Stunde
 expected_alertname = os.getenv("EXPECTED_ALERTNAME", "Watchdog")
 
+# Globaler Lock für Thread-Sicherheit
+watchdog_state_lock = Lock()
+
 # Status-Variables für den Watchdog
 watchdog_state = {
     "last_watchdog_time": 0,
@@ -34,6 +43,7 @@ watchdog_state = {
     "status": "initializing",
     "total_received": 0,
     "invalid_received": 0,
+    "last_status_notification": 0,  # Neue Variable für das tägliche Status-Update
 }
 
 
@@ -53,23 +63,32 @@ def load_watchdog_state():
     ensure_data_directory()
     if os.path.exists(PERSISTENCE_FILE):
         try:
+            saved_state = None
+            # File I/O außerhalb des Locks
             with open(PERSISTENCE_FILE, "r") as f:
                 saved_state = json.load(f)
-                # Nur bekannte Werte übernehmen
-                for key in watchdog_state.keys():
-                    if key in saved_state:
-                        watchdog_state[key] = saved_state[key]
+
+            # Nur bekannte Werte übernehmen
+            if saved_state:
+                with watchdog_state_lock:
+                    for key in watchdog_state.keys():
+                        if key in saved_state:
+                            watchdog_state[key] = saved_state[key]
             logger.info(
                 f"Loaded watchdog state: Last alert received at {format_timestamp(watchdog_state['last_watchdog_time'])}"
             )
         except Exception as e:
             logger.error(f"Error loading watchdog state: {e}")
-            watchdog_state["last_watchdog_time"] = time.time()  # Fallback
+            with watchdog_state_lock:
+                watchdog_state["last_watchdog_time"] = time.time()  # Fallback
+                watchdog_state["last_status_notification"] = (
+                    time.time()
+                )  # Auch den Status-Timestamp setzen
     else:
-        watchdog_state["last_watchdog_time"] = (
-            time.time()
-        )  # Wenn keine Datei existiert, setze den Zeitstempel auf jetzt
-        watchdog_state["status"] = "waiting_for_first_alert"
+        with watchdog_state_lock:
+            watchdog_state["last_watchdog_time"] = time.time()
+            watchdog_state["last_status_notification"] = time.time()
+            watchdog_state["status"] = "waiting_for_first_alert"
         save_watchdog_state()
 
 
@@ -77,9 +96,16 @@ def save_watchdog_state():
     """Speichert den aktuellen Watchdog-Status in einer Datei."""
     ensure_data_directory()
     try:
-        with open(PERSISTENCE_FILE, "w") as f:
-            json.dump(watchdog_state, f)
-        logger.debug(f"Saved watchdog state to {PERSISTENCE_FILE}")
+        # Erst eine Kopie des State ohne Lock erstellen
+        state_copy = None
+        with watchdog_state_lock:
+            state_copy = watchdog_state.copy()
+
+        # File I/O außerhalb des Locks durchführen
+        if state_copy is not None:
+            with open(PERSISTENCE_FILE, "w") as f:
+                json.dump(state_copy, f)
+            logger.debug(f"Saved watchdog state to {PERSISTENCE_FILE}")
     except Exception as e:
         logger.error(f"Error saving watchdog state: {e}")
 
@@ -122,53 +148,81 @@ def check_watchdog():
     """Überprüft regelmäßig den Status des Watchdogs und sendet eine Benachrichtigung, wenn keine neue Nachricht empfangen wurde."""
     global watchdog_state
 
-    # Variable für das tägliche Status-Update hinzufügen
-    last_status_notification = time.time()
+    logger.info("Starting watchdog check thread")
 
     while True:
-        current_time = time.time()
-        time_since_last = current_time - watchdog_state["last_watchdog_time"]
-        time_since_last_notification = current_time - last_status_notification
+        try:
+            current_time = time.time()
 
-        # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
-        if time_since_last > watchdog_timeout:
-            logger.debug(
-                f"time_since_last ({time_since_last}) > watchdog_timeout ({watchdog_timeout})"
-            )
-            if watchdog_state["status"] != "alert":
-                logger.debug("Setting alert state")
-                watchdog_state["status"] = "alert"
-                last_received = format_timestamp(watchdog_state["last_watchdog_time"])
+            # Variablen außerhalb des Locks kopieren
+            last_watchdog_time = 0
+            last_status_notification = 0
+            current_status = ""
 
-                message = (
-                    f"*(ERROR) Watchdog alert - Missing*\n"
-                    f"Description: No Alertmanager Watchdog messages received in the last {int(time_since_last)} seconds.\n"
-                    f"Last watchdog message was received at: {last_received}\n"
-                    f"Summary: Alerting pipeline might be broken or Alertmanager unreachable"
+            with watchdog_state_lock:
+                last_watchdog_time = watchdog_state["last_watchdog_time"]
+                last_status_notification = watchdog_state["last_status_notification"]
+                current_status = watchdog_state["status"]
+
+            time_since_last = current_time - last_watchdog_time
+            time_since_last_notification = current_time - last_status_notification
+
+            # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
+            if time_since_last > watchdog_timeout:
+                logger.debug(
+                    f"time_since_last ({time_since_last}) > watchdog_timeout ({watchdog_timeout})"
                 )
+                if current_status != "alert":
+                    logger.debug("Setting alert state")
+                    last_received = ""
+
+                    with watchdog_state_lock:
+                        watchdog_state["status"] = "alert"
+                        last_received = format_timestamp(
+                            watchdog_state["last_watchdog_time"]
+                        )
+
+                    # Status speichern - außerhalb des Locks
+                    save_watchdog_state()
+
+                    message = (
+                        f"*(ERROR) Watchdog alert - Missing*\n"
+                        f"Description: No Alertmanager Watchdog messages received in the last {int(time_since_last)} seconds.\n"
+                        f"Last watchdog message was received at: {last_received}\n"
+                        f"Summary: Alerting pipeline might be broken or Alertmanager unreachable"
+                    )
+                    # Benachrichtigung senden - außerhalb des Locks
+                    send_google_chat_notification(message)
+
+            # Sendet regelmäßig einen Status, wenn alles okay ist (einmal am Tag)
+            elif (
+                current_status == "ok" and time_since_last_notification >= 86400
+            ):  # Wirklich nur einmal pro Tag
+                logger.debug("Sending daily status update")
+                last_received = format_timestamp(last_watchdog_time)
+                message = (
+                    f"*(INFO) Watchdog status - OK*\n"
+                    f"Description: Alertmanager Watchdog messages are being received normally.\n"
+                    f"Last received: {last_received}\n"
+                    f"Summary: Alerting pipeline is functioning correctly"
+                )
+                # Benachrichtigung außerhalb des Locks senden
                 send_google_chat_notification(message)
+
+                with watchdog_state_lock:
+                    watchdog_state["last_status_notification"] = current_time
+
+                # Status speichern - außerhalb des Locks
                 save_watchdog_state()
 
-        # Sendet regelmäßig einen Status, wenn alles okay ist (einmal am Tag)
-        elif (
-            watchdog_state["status"] == "ok" and time_since_last_notification >= 86400
-        ):  # Wirklich nur einmal pro Tag
-            logger.debug("All good")
-            message = (
-                f"*(INFO) Watchdog status - OK*\n"
-                f"Description: Alertmanager Watchdog messages are being received normally.\n"
-                f"Last received: {format_timestamp(watchdog_state['last_watchdog_time'])}\n"
-                f"Summary: Alerting pipeline is functioning correctly"
-            )
-            send_google_chat_notification(message)
-            last_status_notification = (
-                current_time  # Zeit der letzten Benachrichtigung aktualisieren
-            )
-
-        # Verzögerung für die nächste Überprüfung (1/10 des Timeout-Werts, aber mindestens 30 Sekunden)
-        sleep_time = max(30, int(watchdog_timeout / 10))
-        logger.debug(f"Sleeping for {sleep_time}")
-        time.sleep(sleep_time)
+            # Verzögerung für die nächste Überprüfung (1/10 des Timeout-Werts, aber mindestens 30 Sekunden)
+            sleep_time = max(30, int(watchdog_timeout / 10))
+            logger.debug(f"Sleeping for {sleep_time}")
+            time.sleep(sleep_time)
+        except Exception as e:
+            logger.error(f"Error in check_watchdog thread: {e}")
+            # Kurz warten und weitermachen
+            time.sleep(30)
 
 
 def validate_watchdog_alert(payload):
@@ -212,13 +266,15 @@ def watchdog():
 
     try:
         # Zähler für Gesamtanfragen erhöhen
-        watchdog_state["total_received"] += 1
+        with watchdog_state_lock:
+            watchdog_state["total_received"] += 1
 
         # Die JSON-Payload abrufen
         payload = request.get_json(silent=True)
         if not payload:
             # Ungültiges JSON sollte auch als ungültige Anfrage gezählt werden
-            watchdog_state["invalid_received"] += 1
+            with watchdog_state_lock:
+                watchdog_state["invalid_received"] += 1
             logger.warning("Received empty or invalid JSON payload")
             return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
@@ -229,30 +285,39 @@ def watchdog():
         valid_alert = validate_watchdog_alert(payload)
         if valid_alert:
             # Aktualisiere den Zeitstempel und den Status
-            watchdog_state["last_watchdog_time"] = time.time()
-            watchdog_state["last_watchdog_details"] = {
-                "alertname": valid_alert["labels"].get("alertname", "unknown"),
-                "status": valid_alert.get("status", "unknown"),
-                "summary": valid_alert.get("annotations", {}).get(
-                    "summary", "No summary provided"
-                ),
-                "description": valid_alert.get("annotations", {}).get(
-                    "description", "No description provided"
-                ),
-                "received_at": format_timestamp(time.time()),
-            }
+            current_time = time.time()
+            current_status = ""
+
+            # Update state unter dem Lock
+            with watchdog_state_lock:
+                current_status = watchdog_state["status"]
+                watchdog_state["last_watchdog_time"] = current_time
+                watchdog_state["last_watchdog_details"] = {
+                    "alertname": valid_alert["labels"].get("alertname", "unknown"),
+                    "status": valid_alert.get("status", "unknown"),
+                    "summary": valid_alert.get("annotations", {}).get(
+                        "summary", "No summary provided"
+                    ),
+                    "description": valid_alert.get("annotations", {}).get(
+                        "description", "No description provided"
+                    ),
+                    "received_at": format_timestamp(current_time),
+                }
+                watchdog_state["status"] = "ok"
+
+            # Status speichern - außerhalb des Locks
+            save_watchdog_state()
 
             # Wenn wir vorher im Alert-Status waren, sende eine Erholungsnachricht
-            if watchdog_state["status"] == "alert":
+            if current_status == "alert":
                 message = (
                     "*(INFO) Watchdog recovered*\n"
                     "Description: Alertmanager Watchdog messages are being received again.\n"
                     "Summary: Alerting pipeline has recovered"
                 )
+                # Benachrichtigung außerhalb des Locks senden
                 send_google_chat_notification(message)
 
-            watchdog_state["status"] = "ok"
-            save_watchdog_state()
             return (
                 jsonify(
                     {"status": "success", "message": "Valid watchdog alert processed"}
@@ -261,7 +326,8 @@ def watchdog():
             )
         else:
             # Es handelt sich nicht um einen gültigen Watchdog-Alert
-            watchdog_state["invalid_received"] += 1
+            with watchdog_state_lock:
+                watchdog_state["invalid_received"] += 1
             logger.warning(
                 f"Received invalid watchdog alert. Total invalid: {watchdog_state['invalid_received']}"
             )
@@ -277,7 +343,8 @@ def watchdog():
 
     except Exception as e:
         # Auch Ausnahmen sollten als ungültige Anfragen gezählt werden
-        watchdog_state["invalid_received"] += 1
+        with watchdog_state_lock:
+            watchdog_state["invalid_received"] += 1
         logger.error(f"Error processing watchdog request: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -286,18 +353,24 @@ def watchdog():
 def health_check():
     """Endpunkt für Health-Checks."""
     current_time = time.time()
-    time_since_last = current_time - watchdog_state["last_watchdog_time"]
+
+    # State unter dem Lock kopieren
+    with watchdog_state_lock:
+        last_watchdog_time = watchdog_state["last_watchdog_time"]
+        status = watchdog_state["status"]
+        total_received = watchdog_state["total_received"]
+        invalid_received = watchdog_state["invalid_received"]
+
+    time_since_last = current_time - last_watchdog_time
 
     health_status = {
-        "status": watchdog_state["status"],
-        "last_watchdog_received": format_timestamp(
-            watchdog_state["last_watchdog_time"]
-        ),
+        "status": status,
+        "last_watchdog_received": format_timestamp(last_watchdog_time),
         "seconds_since_last_watchdog": int(time_since_last),
         "timeout_threshold": watchdog_timeout,
         "is_healthy": time_since_last <= watchdog_timeout,
-        "total_alerts_received": watchdog_state["total_received"],
-        "invalid_alerts_received": watchdog_state["invalid_received"],
+        "total_alerts_received": total_received,
+        "invalid_alerts_received": invalid_received,
     }
 
     status_code = 200 if health_status["is_healthy"] else 503
@@ -308,11 +381,16 @@ def health_check():
 def status():
     """Liefert detaillierte Statusinformationen."""
     current_time = time.time()
+
+    # State unter dem Lock kopieren
+    with watchdog_state_lock:
+        state_copy = watchdog_state.copy()
+
     return (
         jsonify(
             {
                 "current_time": format_timestamp(current_time),
-                "watchdog_state": watchdog_state,
+                "watchdog_state": state_copy,
                 "config": {
                     "timeout": watchdog_timeout,
                     "expected_alertname": expected_alertname,
@@ -367,6 +445,7 @@ load_watchdog_state()
 if not os.environ.get("RUNNING_IN_GUNICORN", ""):
     checker_thread = Thread(target=check_watchdog, daemon=True)
     checker_thread.start()
+    logger.info("Started watchdog check thread in standalone mode")
 
 # Wenn das Skript direkt ausgeführt wird (nicht als Modul importiert)
 if __name__ == "__main__":
