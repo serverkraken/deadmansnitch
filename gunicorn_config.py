@@ -1,6 +1,5 @@
 import os
 import threading
-import multiprocessing
 from app.watchdog_service import check_watchdog
 
 # Gunicorn-Konfiguration für Produktionsumgebungen
@@ -20,7 +19,20 @@ loglevel = os.getenv("LOG_LEVEL", "info")
 os.environ["RUNNING_IN_GUNICORN"] = "true"
 
 
-# Funktion, die nach dem Startup des Workers ausgeführt wird
-def post_worker_init(worker):
-    # Den Watchdog-Check-Thread starten
-    threading.Thread(target=check_watchdog, daemon=True).start()
+# Die ursprüngliche post_worker_init Funktion wird in Gunicorn nicht automatisch aufgerufen!
+# Wir brauchen stattdessen diese Hooks:
+def when_ready(server):
+    """Wird aufgerufen, wenn Gunicorn bereit ist, Anfragen zu verarbeiten."""
+    server.log.info("Starting watchdog check thread in when_ready hook")
+    t = threading.Thread(target=check_watchdog)
+    t.daemon = True
+    t.start()
+
+
+# Alternative Hook-Methode
+def post_fork(server, worker):
+    """Wird nach dem Forking eines Worker-Prozesses aufgerufen."""
+    server.log.info(f"Starting watchdog check thread in worker {worker.pid}")
+    t = threading.Thread(target=check_watchdog)
+    t.daemon = True
+    t.start()
