@@ -5,7 +5,8 @@ from app.watchdog_service import check_watchdog
 
 # Gunicorn-Konfiguration für Produktionsumgebungen
 bind = "0.0.0.0:5001"
-workers = multiprocessing.cpu_count() * 2 + 1  # Empfohlene Anzahl von Workern
+# workers = multiprocessing.cpu_count() * 2 + 1  # Empfohlene Anzahl von Workern
+workers = 1
 threads = 2
 worker_class = "gthread"  # Gevent oder gthread sind gute Optionen für Anwendungen mit lange laufenden Anfragen
 timeout = 120  # Längerer Timeout für mögliche lange Webhook-Anfragen
