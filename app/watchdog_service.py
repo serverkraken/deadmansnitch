@@ -9,7 +9,7 @@ from threading import Thread
 
 # Logger konfigurieren
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
@@ -132,7 +132,11 @@ def check_watchdog():
 
         # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
         if time_since_last > watchdog_timeout:
+            logger.debug(
+                f"time_since_last ({time_since_last}) > watchdog_timeout ({watchdog_timeout})"
+            )
             if watchdog_state["status"] != "alert":
+                logger.debug("Setting alert state")
                 watchdog_state["status"] = "alert"
                 last_received = format_timestamp(watchdog_state["last_watchdog_time"])
 
@@ -149,6 +153,7 @@ def check_watchdog():
         elif (
             watchdog_state["status"] == "ok" and time_since_last_notification >= 86400
         ):  # Wirklich nur einmal pro Tag
+            logger.debug("All good")
             message = (
                 f"*(INFO) Watchdog status - OK*\n"
                 f"Description: Alertmanager Watchdog messages are being received normally.\n"
@@ -162,6 +167,7 @@ def check_watchdog():
 
         # Verzögerung für die nächste Überprüfung (1/10 des Timeout-Werts, aber mindestens 30 Sekunden)
         sleep_time = max(30, int(watchdog_timeout / 10))
+        logger.debug(f"Sleeping for {sleep_time}")
         time.sleep(sleep_time)
 
 
