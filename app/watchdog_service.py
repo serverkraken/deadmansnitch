@@ -32,6 +32,8 @@ PERSISTENCE_FILE = os.path.join(DATA_DIR, "watchdog_state.json")
 google_chat_webhook_url = os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
 watchdog_timeout = int(os.getenv("WATCHDOG_TIMEOUT", 3600))  # Default auf 1 Stunde
 expected_alertname = os.getenv("EXPECTED_ALERTNAME", "Watchdog")
+# Wie oft soll ein Alert erneut gesendet werden (in Sekunden), standardmäßig alle 6 Stunden
+alert_resend_interval = int(os.getenv("ALERT_RESEND_INTERVAL", 21600))
 
 # Globaler Lock für Thread-Sicherheit
 watchdog_state_lock = Lock()
@@ -43,7 +45,8 @@ watchdog_state = {
     "status": "initializing",
     "total_received": 0,
     "invalid_received": 0,
-    "last_status_notification": 0,  # Neue Variable für das tägliche Status-Update
+    "last_status_notification": 0,  # Für das tägliche Status-Update
+    "last_alert_notification": 0,  # NEU: Für wiederholte Alert-Benachrichtigungen
 }
 
 
@@ -84,10 +87,14 @@ def load_watchdog_state():
                 watchdog_state["last_status_notification"] = (
                     time.time()
                 )  # Auch den Status-Timestamp setzen
+                watchdog_state["last_alert_notification"] = (
+                    0  # Neue Variable initialisieren
+                )
     else:
         with watchdog_state_lock:
             watchdog_state["last_watchdog_time"] = time.time()
             watchdog_state["last_status_notification"] = time.time()
+            watchdog_state["last_alert_notification"] = 0
             watchdog_state["status"] = "waiting_for_first_alert"
         save_watchdog_state()
 
@@ -157,27 +164,38 @@ def check_watchdog():
             # Variablen außerhalb des Locks kopieren
             last_watchdog_time = 0
             last_status_notification = 0
+            last_alert_notification = 0
             current_status = ""
 
             with watchdog_state_lock:
                 last_watchdog_time = watchdog_state["last_watchdog_time"]
                 last_status_notification = watchdog_state["last_status_notification"]
+                last_alert_notification = watchdog_state.get(
+                    "last_alert_notification", 0
+                )
                 current_status = watchdog_state["status"]
 
             time_since_last = current_time - last_watchdog_time
             time_since_last_notification = current_time - last_status_notification
+            time_since_last_alert = current_time - last_alert_notification
 
             # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
             if time_since_last > watchdog_timeout:
                 logger.debug(
                     f"time_since_last ({time_since_last}) > watchdog_timeout ({watchdog_timeout})"
                 )
+
+                # Zwei Fälle:
+                # 1. Wenn Status noch nicht alert ist, setze auf alert und sende erste Benachrichtigung
+                # 2. Wenn Status bereits alert ist, prüfe ob es Zeit für eine Wiederholung ist
+
                 if current_status != "alert":
                     logger.debug("Setting alert state")
                     last_received = ""
 
                     with watchdog_state_lock:
                         watchdog_state["status"] = "alert"
+                        watchdog_state["last_alert_notification"] = current_time
                         last_received = format_timestamp(
                             watchdog_state["last_watchdog_time"]
                         )
@@ -192,6 +210,24 @@ def check_watchdog():
                         f"Summary: Alerting pipeline might be broken or Alertmanager unreachable"
                     )
                     # Benachrichtigung senden - außerhalb des Locks
+                    send_google_chat_notification(message)
+
+                # Fall 2: Status ist bereits alert, prüfe auf Wiederholungsintervall
+                elif time_since_last_alert >= alert_resend_interval:
+                    logger.debug("Resending alert notification")
+                    last_received = format_timestamp(last_watchdog_time)
+
+                    with watchdog_state_lock:
+                        watchdog_state["last_alert_notification"] = current_time
+
+                    save_watchdog_state()
+
+                    message = (
+                        f"*(ERROR) Watchdog alert - Still Missing*\n"
+                        f"Description: No Alertmanager Watchdog messages received in the last {int(time_since_last)} seconds.\n"
+                        f"Last watchdog message was received at: {last_received}\n"
+                        f"Summary: Alerting pipeline might still be broken or Alertmanager unreachable"
+                    )
                     send_google_chat_notification(message)
 
             # Sendet regelmäßig einen Status, wenn alles okay ist (einmal am Tag)
@@ -397,6 +433,7 @@ def status():
                     "has_webhook_url": google_chat_webhook_url is not None,
                     "data_directory": DATA_DIR,
                     "persistence_file": PERSISTENCE_FILE,
+                    "alert_resend_interval": alert_resend_interval,
                 },
                 "uptime": int(current_time - start_time),
             }
