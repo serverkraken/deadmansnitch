@@ -27,9 +27,17 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
     - name: Extract short commit SHA
       id: vars
-      run: echo "::set-output name=short_sha::$(git rev-parse --short HEAD)"
+      run: echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
@@ -38,8 +46,10 @@ jobs:
         push: true
         tags: |
           ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ steps.vars.outputs.short_sha }}
+          ghcr.io/${{ github.repository }}:${{ env.short_sha }}
         platforms: linux/amd64,linux/arm64
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
 
     - name: Create GitHub Tag
       env:
@@ -47,5 +57,5 @@ jobs:
       run: |
         git config --global user.name 'github-actions'
         git config --global user.email 'github-actions@github.com'
-        git tag ${GITHUB_REF##*/}-${{ steps.vars.outputs.short_sha }}
-        git push origin ${GITHUB_REF##*/}-${{ steps.vars.outputs.short_sha }}
+        git tag ${GITHUB_REF##*/}-${{ env.short_sha }}
+        git push origin ${GITHUB_REF##*/}-${{ env.short_sha }}
