@@ -1,3 +1,5 @@
 .venv
 .envrc
 app/watchdog_state.json
+**/*.pyc
+**/__pycache__

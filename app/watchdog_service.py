@@ -1,11 +1,12 @@
 import time
 import os
-import requests
 import json
 import logging
-from datetime import datetime
-from flask import Flask, request, jsonify
-from threading import Thread
+import sqlite3
+import requests
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify, abort
+from threading import Thread, Lock
 
 # Logger konfigurieren
 logging.basicConfig(
@@ -18,70 +19,33 @@ logger = logging.getLogger("watchdog_service")
 # Flask initialisieren
 webapp = Flask(__name__)
 
-# Dateipfad für die Persistenz
-DATA_DIR = os.getenv("DATA_DIR", "/data")
-PERSISTENCE_FILE = os.path.join(DATA_DIR, "watchdog_state.json")
+# SQLite initialisieren
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_FILE = os.path.join(DATA_DIR, "watchdog.db")
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+cursor = conn.cursor()
+
+# Create table if not exists
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS watchdog_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    last_watchdog_time REAL,
+    status TEXT,
+    total_received INTEGER,
+    invalid_received INTEGER
+)
+""")
+conn.commit()
 
 # Konfiguration aus Umgebungsvariablen laden
 google_chat_webhook_url = os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
 watchdog_timeout = int(os.getenv("WATCHDOG_TIMEOUT", 3600))  # Default auf 1 Stunde
 expected_alertname = os.getenv("EXPECTED_ALERTNAME", "Watchdog")
+cleanup_token = os.getenv("CLEANUP_TOKEN", "default_secret_token")
 
-# Status-Variables für den Watchdog
-watchdog_state = {
-    "last_watchdog_time": 0,
-    "last_watchdog_details": {},
-    "status": "initializing",
-    "total_received": 0,
-    "invalid_received": 0,
-}
-
-
-def ensure_data_directory():
-    """Stellt sicher, dass das Datenverzeichnis existiert"""
-    if not os.path.exists(DATA_DIR):
-        try:
-            os.makedirs(DATA_DIR, exist_ok=True)
-            logger.info(f"Created data directory at {DATA_DIR}")
-        except Exception as e:
-            logger.error(f"Failed to create data directory: {e}")
-
-
-def load_watchdog_state():
-    """Lädt den Watchdog-Status aus einer Datei."""
-    global watchdog_state
-    ensure_data_directory()
-    if os.path.exists(PERSISTENCE_FILE):
-        try:
-            with open(PERSISTENCE_FILE, "r") as f:
-                saved_state = json.load(f)
-                # Nur bekannte Werte übernehmen
-                for key in watchdog_state.keys():
-                    if key in saved_state:
-                        watchdog_state[key] = saved_state[key]
-            logger.info(
-                f"Loaded watchdog state: Last alert received at {format_timestamp(watchdog_state['last_watchdog_time'])}"
-            )
-        except Exception as e:
-            logger.error(f"Error loading watchdog state: {e}")
-            watchdog_state["last_watchdog_time"] = time.time()  # Fallback
-    else:
-        watchdog_state["last_watchdog_time"] = (
-            time.time()
-        )  # Wenn keine Datei existiert, setze den Zeitstempel auf jetzt
-        watchdog_state["status"] = "waiting_for_first_alert"
-        save_watchdog_state()
-
-
-def save_watchdog_state():
-    """Speichert den aktuellen Watchdog-Status in einer Datei."""
-    ensure_data_directory()
-    try:
-        with open(PERSISTENCE_FILE, "w") as f:
-            json.dump(watchdog_state, f)
-        logger.debug(f"Saved watchdog state to {PERSISTENCE_FILE}")
-    except Exception as e:
-        logger.error(f"Error saving watchdog state: {e}")
+# Lock für thread-sichere Operationen
+lock = Lock()
 
 
 def format_timestamp(timestamp):
@@ -118,19 +82,57 @@ def send_google_chat_notification(message):
         return False
 
 
+def get_watchdog_state():
+    """Lädt den aktuellen Watchdog-Status aus der Datenbank."""
+    with lock:
+        cursor.execute("SELECT * FROM watchdog_state ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            return {
+                "last_watchdog_time": row[1],
+                "status": row[2],
+                "total_received": row[3],
+                "invalid_received": row[4],
+            }
+        else:
+            return {
+                "last_watchdog_time": 0,
+                "status": "initializing",
+                "total_received": 0,
+                "invalid_received": 0,
+            }
+
+
+def update_watchdog_state(state):
+    """Aktualisiert den Watchdog-Status in der Datenbank."""
+    with lock:
+        cursor.execute(
+            """
+            INSERT INTO watchdog_state (last_watchdog_time, status, total_received, invalid_received)
+            VALUES (?, ?, ?, ?)
+        """,
+            (
+                state["last_watchdog_time"],
+                state["status"],
+                state["total_received"],
+                state["invalid_received"],
+            ),
+        )
+        conn.commit()
+
+
 def check_watchdog():
     """Überprüft regelmäßig den Status des Watchdogs und sendet eine Benachrichtigung, wenn keine neue Nachricht empfangen wurde."""
-    global watchdog_state
-
     while True:
         current_time = time.time()
-        time_since_last = current_time - watchdog_state["last_watchdog_time"]
+        state = get_watchdog_state()
+        time_since_last = current_time - state["last_watchdog_time"]
 
         # Überprüfe, ob die Zeit seit dem letzten Watchdog das Timeout überschreitet
         if time_since_last > watchdog_timeout:
-            if watchdog_state["status"] != "alert":
-                watchdog_state["status"] = "alert"
-                last_received = format_timestamp(watchdog_state["last_watchdog_time"])
+            if state["status"] != "alert":
+                state["status"] = "alert"
+                last_received = format_timestamp(state["last_watchdog_time"])
 
                 message = (
                     f"*(ERROR) Watchdog alert - Missing*\n"
@@ -139,16 +141,16 @@ def check_watchdog():
                     f"Summary: Alerting pipeline might be broken or Alertmanager unreachable"
                 )
                 send_google_chat_notification(message)
-                save_watchdog_state()
+                update_watchdog_state(state)
 
         # Sendet regelmäßig einen Status, wenn alles okay ist (einmal am Tag)
         elif (
-            watchdog_state["status"] == "ok" and time_since_last % 86400 < 60
+            state["status"] == "ok" and time_since_last % 86400 < 60
         ):  # ~einmal pro Tag
             message = (
                 f"*(INFO) Watchdog status - OK*\n"
                 f"Description: Alertmanager Watchdog messages are being received normally.\n"
-                f"Last received: {format_timestamp(watchdog_state['last_watchdog_time'])}\n"
+                f"Last received: {format_timestamp(state['last_watchdog_time'])}\n"
                 f"Summary: Alerting pipeline is functioning correctly"
             )
             send_google_chat_notification(message)
@@ -195,18 +197,19 @@ def validate_watchdog_alert(payload):
 @webapp.route("/watchdog", methods=["POST"])
 def watchdog():
     """Empfängt POST-Anfragen von Alertmanager und verarbeitet die Watchdog-Alerts."""
-    global watchdog_state
-
     try:
+        state = get_watchdog_state()
+
         # Zähler für Gesamtanfragen erhöhen
-        watchdog_state["total_received"] += 1
+        state["total_received"] += 1
 
         # Die JSON-Payload abrufen
         payload = request.get_json(silent=True)
         if not payload:
             # Ungültiges JSON sollte auch als ungültige Anfrage gezählt werden
-            watchdog_state["invalid_received"] += 1
+            state["invalid_received"] += 1
             logger.warning("Received empty or invalid JSON payload")
+            update_watchdog_state(state)
             return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
         # Payload für Debug-Zwecke loggen
@@ -216,21 +219,10 @@ def watchdog():
         valid_alert = validate_watchdog_alert(payload)
         if valid_alert:
             # Aktualisiere den Zeitstempel und den Status
-            watchdog_state["last_watchdog_time"] = time.time()
-            watchdog_state["last_watchdog_details"] = {
-                "alertname": valid_alert["labels"].get("alertname", "unknown"),
-                "status": valid_alert.get("status", "unknown"),
-                "summary": valid_alert.get("annotations", {}).get(
-                    "summary", "No summary provided"
-                ),
-                "description": valid_alert.get("annotations", {}).get(
-                    "description", "No description provided"
-                ),
-                "received_at": format_timestamp(time.time()),
-            }
+            state["last_watchdog_time"] = time.time()
 
             # Wenn wir vorher im Alert-Status waren, sende eine Erholungsnachricht
-            if watchdog_state["status"] == "alert":
+            if state["status"] == "alert":
                 message = (
                     "*(INFO) Watchdog recovered*\n"
                     "Description: Alertmanager Watchdog messages are being received again.\n"
@@ -238,34 +230,30 @@ def watchdog():
                 )
                 send_google_chat_notification(message)
 
-            watchdog_state["status"] = "ok"
-            save_watchdog_state()
-            return (
-                jsonify(
-                    {"status": "success", "message": "Valid watchdog alert processed"}
-                ),
-                200,
-            )
+            state["status"] = "ok"
+            update_watchdog_state(state)
+            return jsonify(
+                {"status": "success", "message": "Valid watchdog alert processed"}
+            ), 200
         else:
             # Es handelt sich nicht um einen gültigen Watchdog-Alert
-            watchdog_state["invalid_received"] += 1
+            state["invalid_received"] += 1
             logger.warning(
-                f"Received invalid watchdog alert. Total invalid: {watchdog_state['invalid_received']}"
+                f"Received invalid watchdog alert. Total invalid: {state['invalid_received']}"
             )
-            return (
-                jsonify(
-                    {
-                        "status": "warning",
-                        "message": "Received alert is not a valid watchdog alert",
-                    }
-                ),
-                200,
-            )
+            update_watchdog_state(state)
+            return jsonify(
+                {
+                    "status": "warning",
+                    "message": "Received alert is not a valid watchdog alert",
+                }
+            ), 200
 
     except Exception as e:
         # Auch Ausnahmen sollten als ungültige Anfragen gezählt werden
-        watchdog_state["invalid_received"] += 1
+        state["invalid_received"] += 1
         logger.error(f"Error processing watchdog request: {str(e)}")
+        update_watchdog_state(state)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -273,18 +261,17 @@ def watchdog():
 def health_check():
     """Endpunkt für Health-Checks."""
     current_time = time.time()
-    time_since_last = current_time - watchdog_state["last_watchdog_time"]
+    state = get_watchdog_state()
+    time_since_last = current_time - state["last_watchdog_time"]
 
     health_status = {
-        "status": watchdog_state["status"],
-        "last_watchdog_received": format_timestamp(
-            watchdog_state["last_watchdog_time"]
-        ),
+        "status": state["status"],
+        "last_watchdog_received": format_timestamp(state["last_watchdog_time"]),
         "seconds_since_last_watchdog": int(time_since_last),
         "timeout_threshold": watchdog_timeout,
         "is_healthy": time_since_last <= watchdog_timeout,
-        "total_alerts_received": watchdog_state["total_received"],
-        "invalid_alerts_received": watchdog_state["invalid_received"],
+        "total_alerts_received": state["total_received"],
+        "invalid_alerts_received": state["invalid_received"],
     }
 
     status_code = 200 if health_status["is_healthy"] else 503
@@ -295,60 +282,81 @@ def health_check():
 def status():
     """Liefert detaillierte Statusinformationen."""
     current_time = time.time()
-    return (
-        jsonify(
-            {
-                "current_time": format_timestamp(current_time),
-                "watchdog_state": watchdog_state,
-                "config": {
-                    "timeout": watchdog_timeout,
-                    "expected_alertname": expected_alertname,
-                    "has_webhook_url": google_chat_webhook_url is not None,
-                    "data_directory": DATA_DIR,
-                    "persistence_file": PERSISTENCE_FILE,
-                },
-                "uptime": int(current_time - start_time),
-            }
-        ),
-        200,
-    )
+    state = get_watchdog_state()
+    return jsonify(
+        {
+            "current_time": format_timestamp(current_time),
+            "watchdog_state": state,
+            "config": {
+                "timeout": watchdog_timeout,
+                "expected_alertname": expected_alertname,
+                "has_webhook_url": google_chat_webhook_url is not None,
+                "db_file": DB_FILE,
+            },
+            "uptime": int(current_time - start_time),
+        }
+    ), 200
 
 
 @webapp.route("/", methods=["GET"])
 def root():
     """Root-Endpunkt für einfache Verfügbarkeitsprüfung."""
-    return (
-        jsonify(
-            {
-                "service": "Alertmanager Watchdog Service",
-                "version": "1.0.0",
-                "status": "running",
-                "endpoints": [
-                    {
-                        "path": "/watchdog",
-                        "method": "POST",
-                        "description": "Endpoint for Alertmanager webhook",
-                    },
-                    {
-                        "path": "/health",
-                        "method": "GET",
-                        "description": "Health check endpoint",
-                    },
-                    {
-                        "path": "/status",
-                        "method": "GET",
-                        "description": "Detailed status information",
-                    },
-                ],
-            }
-        ),
-        200,
-    )
+    return jsonify(
+        {
+            "service": "Alertmanager Watchdog Service",
+            "version": "1.0.0",
+            "status": "running",
+            "endpoints": [
+                {
+                    "path": "/watchdog",
+                    "method": "POST",
+                    "description": "Endpoint for Alertmanager webhook",
+                },
+                {
+                    "path": "/health",
+                    "method": "GET",
+                    "description": "Health check endpoint",
+                },
+                {
+                    "path": "/status",
+                    "method": "GET",
+                    "description": "Detailed status information",
+                },
+            ],
+        }
+    ), 200
+
+
+@webapp.route("/cleanup", methods=["POST"])
+def cleanup():
+    """Bereinigt alte Einträge aus der Datenbank."""
+    token = request.headers.get("Authorization")
+    if token != f"Bearer {cleanup_token}":
+        abort(403)  # Verboten, wenn das Token nicht korrekt ist
+
+    now = datetime.now()
+    cutoff_time = now - timedelta(days=30)  # Einträge älter als 30 Tage löschen
+    cutoff_timestamp = cutoff_time.timestamp()
+
+    with lock:
+        cursor.execute(
+            "DELETE FROM watchdog_state WHERE last_watchdog_time < ?",
+            (cutoff_timestamp,),
+        )
+        conn.commit()
+        logger.info(f"Deleted entries older than {cutoff_time}")
+
+    return jsonify(
+        {"status": "success", "message": f"Deleted entries older than {cutoff_time}"}
+    ), 200
 
 
 # Beim Starten der Anwendung: Lade den letzten Watchdog-Zeitstempel
 start_time = time.time()
-load_watchdog_state()
+state = get_watchdog_state()
+if state["status"] == "initializing":
+    state["status"] = "waiting_for_first_alert"
+    update_watchdog_state(state)
 
 # Starte den Watchdog-Check Thread, wenn die Anwendung nicht von Gunicorn gestartet wird
 if not os.environ.get("RUNNING_IN_GUNICORN", ""):
