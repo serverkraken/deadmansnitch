@@ -47,6 +47,7 @@ class WatchdogMonitor:
 
                 # Get current state (with lock in service)
                 service = self.watchdog_service
+                service.state = service.repository.load()
                 with service.state_lock:
                     last_watchdog_time = service.state.last_watchdog_time
                     last_status_notification = service.state.last_status_notification
@@ -121,4 +122,3 @@ class WatchdogMonitor:
             except Exception as e:
                 logger.error(f"Error in watchdog monitor thread: {e}")
                 time.sleep(30)  # Sleep on error, then continue
-

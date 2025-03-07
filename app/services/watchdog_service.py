@@ -12,6 +12,7 @@ class WatchdogService:
     _instance = None
     _lock = threading.Lock()
 
+    # In watchdog_service.py
     @classmethod
     def get_instance(cls, repository=None, notifier=None, config=None):
         """Get the singleton instance of the watchdog service"""
@@ -22,6 +23,14 @@ class WatchdogService:
                         "Repository, notifier, and config must be provided when creating instance"
                     )
                 cls._instance = cls(repository, notifier, config)
+            else:
+                # Update repository, notifier and config if provided
+                if repository is not None:
+                    cls._instance.repository = repository
+                if notifier is not None:
+                    cls._instance.notifier = notifier
+                if config is not None:
+                    cls._instance.config = config
             return cls._instance
 
     def __init__(self, repository, notifier, config):
