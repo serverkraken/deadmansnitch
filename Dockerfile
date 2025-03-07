@@ -7,13 +7,7 @@ RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
 WORKDIR /app
 
 # Create requirements.txt file
-RUN echo 'Flask==2.3.3' > requirements.txt && \
-  echo 'Werkzeug==2.3.7' >> requirements.txt && \
-  echo 'gunicorn==21.2.0' >> requirements.txt && \
-  echo 'requests==2.31.0' >> requirements.txt && \
-  echo 'python-dateutil==2.8.2' >> requirements.txt && \
-  echo 'pytest==7.4.2' >> requirements.txt && \
-  echo 'pytest-cov==4.1.0' >> requirements.txt
+COPY requirements.txt .
 
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
