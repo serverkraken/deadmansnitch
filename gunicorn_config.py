@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 import os
+from app.logging_setup import configure_global_logging
+
+# Globales Log-Level konfigurieren
+log_level_name = os.getenv("LOG_LEVEL", "info")
+os.environ["LOG_LEVEL"] = (
+    log_level_name  # Umgebungsvariable setzen BEVOR weitere Module geladen werden
+)
+configure_global_logging()  # Explizit die globale Logger-Konfiguration aufrufen
+
+# Gunicorn-spezifische Konfiguration
+loglevel = log_level_name.lower()  # Gunicorn verwendet Kleinbuchstaben
+
 from app.config import Config
 from app.persistence.file_repository import FileWatchdogRepository
 from app.notifications.notifier import Notifier
