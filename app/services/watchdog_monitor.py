@@ -28,6 +28,9 @@ class WatchdogMonitor:
     def _run_monitor(self):
         """Run the monitor loop"""
         logger.info("Starting watchdog monitor loop")
+        logger.debug(
+            f"Monitor running with service instance {id(self.watchdog_service)}"
+        )
 
         # Add a startup grace period to allow watchdog messages to arrive
         startup_time = time.time()

@@ -82,6 +82,7 @@ class WatchdogService:
 
     def process_watchdog_alert(self, payload):
         """Process a received webhook payload"""
+        logger.debug(f"Processing alert in service instance {id(self)}")
         with self.state_lock:
             self.state.total_received += 1
 
