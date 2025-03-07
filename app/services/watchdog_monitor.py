@@ -65,12 +65,11 @@ class WatchdogMonitor:
                 time_since_last_notification = current_time - last_status_notification
                 time_since_last_alert = current_time - last_alert_notification
 
+                logger.debug(
+                    f"time_since_last: ({time_since_last}), watchdog_timeout ({self.config.watchdog_timeout})"
+                )
                 # Check for watchdog timeout
                 if time_since_last > self.config.watchdog_timeout:
-                    logger.debug(
-                        f"time_since_last ({time_since_last}) > watchdog_timeout ({self.config.watchdog_timeout})"
-                    )
-
                     # Case 1: First alert
                     if current_status != "alert":
                         logger.debug("Setting alert state")
@@ -122,10 +121,11 @@ class WatchdogMonitor:
                     self.notifier.send_status_update(last_received)
 
                 # Sleep for a while
-                sleep_time = max(30, int(self.config.watchdog_timeout / 10))
+                # Feste Prüfzeit von 1 Sekunde statt dynamischer Berechnung
+                sleep_time = 1
                 logger.debug(f"Monitor sleeping for {sleep_time} seconds")
                 time.sleep(sleep_time)
 
             except Exception as e:
                 logger.error(f"Error in watchdog monitor thread: {e}")
-                time.sleep(30)  # Sleep on error, then continue
+                time.sleep(5)  # Bei Fehlern kürzere Wartezeit, aber nicht zu kurz

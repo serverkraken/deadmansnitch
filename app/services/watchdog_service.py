@@ -1,6 +1,7 @@
 import logging
 from threading import RLock  # RLock statt Lock verwenden
 import os
+import time
 import fcntl  # Für File-Locking
 
 logger = logging.getLogger("watchdog_service")
@@ -139,14 +140,20 @@ class WatchdogService:
         try:
             # Prüfen, ob die Datei seit dem letzten Laden geändert wurde
             filepath = os.path.join(self.repository.data_dir, self.repository.filename)
-            if os.path.exists(filepath):
-                mtime = os.path.getmtime(filepath)
 
-                # Wir speichern die letzte Änderungszeit der Datei
-                if not hasattr(self, '_last_file_mtime') or mtime > self._last_file_mtime:
-                    logger.debug("Refreshing state from file (modified externally)")
-                    self.state = self.repository.load()
-                    self._last_file_mtime = mtime
+            # Cache-Zeitstempel für Dateisystemprüfungen
+            current_time = time.time()
+            if not hasattr(self, '_last_check_time') or current_time - self._last_check_time > 5:
+                self._last_check_time = current_time
+                # Dateisystemzugriffe nur alle 5 Sekunden
+                if os.path.exists(filepath):
+                    mtime = os.path.getmtime(filepath)
+
+                    # Wir speichern die letzte Änderungszeit der Datei
+                    if not hasattr(self, '_last_file_mtime') or mtime > self._last_file_mtime:
+                        logger.debug("Refreshing state from file (modified externally)")
+                        self.state = self.repository.load()
+                        self._last_file_mtime = mtime
         except Exception as e:
             logger.error(f"Error refreshing state: {e}")
 
