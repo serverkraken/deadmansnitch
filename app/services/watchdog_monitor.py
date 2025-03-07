@@ -50,8 +50,13 @@ class WatchdogMonitor:
 
                 # Get current state (with lock in service)
                 service = self.watchdog_service
-                service.state = service.repository.load()
+
+                # Nutzen des bereits geladenen States, falls er existiert
+                # Nur laden wenn nötig
                 with service.state_lock:
+                    if service.state is None:
+                        service.state = service.repository.load()
+
                     last_watchdog_time = service.state.last_watchdog_time
                     last_status_notification = service.state.last_status_notification
                     last_alert_notification = service.state.last_alert_notification

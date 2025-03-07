@@ -39,6 +39,10 @@ class WatchdogService:
         if payload is None:
             return False, "Invalid payload: None"
 
+        # Zusätzliche Validierung
+        if not isinstance(payload, dict):
+            return False, "Invalid payload: Not a dictionary"
+
         with self.state_lock:
             # Increment total counter
             self.state.total_received += 1
@@ -76,41 +80,6 @@ class WatchdogService:
                 self.notifier.send_recovery()
 
         return True, "Watchdog alert received and processed"
-
-    def check_watchdog_status(self):
-        """Check if the watchdog should be in alert state"""
-        with self.state_lock:
-            if (
-                self.state.status == "initializing"
-                or self.state.status == "waiting_for_first_alert"
-            ):
-                # Skip checking on first run
-                return False
-
-            time_since_last = self.state.time_since_last_watchdog()
-
-            # If too much time has passed, enter alert state
-            if time_since_last > self.config.watchdog_timeout:
-                # Only update state if not already in alert
-                if self.state.status != "alert":
-                    logger.warning(
-                        f"Watchdog timeout exceeded: {time_since_last:.1f}s > {self.config.watchdog_timeout}s"
-                    )
-                    self.state.set_alert_status()
-                    self.repository.save(self.state)
-                    return True
-
-                # If in alert state, check if we should send another notification
-                time_since_notification = (
-                    self.state.time_since_last_alert_notification()
-                )
-                if time_since_notification > self.config.alert_resend_interval:
-                    logger.info(
-                        f"Sending repeated alert notification after {time_since_notification:.1f}s"
-                    )
-                    return True
-
-        return False
 
     def _validate_watchdog_alert(self, payload):
         """Validate the alert has the expected format"""
