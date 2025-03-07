@@ -1,163 +1,166 @@
-import time
 import logging
-import threading
-from app.domain.watchdog_state import WatchdogState
+from threading import Lock
 
 logger = logging.getLogger("watchdog_service")
 
 
 class WatchdogService:
-    """Core watchdog service implementation (Singleton pattern)"""
+    """Service for managing watchdog alerts"""
 
+    # Singleton instance
     _instance = None
-    _lock = threading.Lock()
+    _lock = Lock()
 
-    # In watchdog_service.py
     @classmethod
     def get_instance(cls, repository=None, notifier=None, config=None):
-        """Get the singleton instance of the watchdog service"""
         with cls._lock:
             if cls._instance is None:
-                if repository is None or notifier is None or config is None:
-                    raise ValueError(
-                        "Repository, notifier, and config must be provided when creating instance"
-                    )
                 cls._instance = cls(repository, notifier, config)
-            else:
-                # Update repository, notifier and config if provided
-                if repository is not None:
-                    cls._instance.repository = repository
-                if notifier is not None:
-                    cls._instance.notifier = notifier
-                if config is not None:
-                    cls._instance.config = config
             return cls._instance
 
     def __init__(self, repository, notifier, config):
-        """Initialize the watchdog service"""
+        """Initialize watchdog service"""
         self.repository = repository
         self.notifier = notifier
         self.config = config
         self.state = None
-        self.state_lock = threading.Lock()
-        self.start_time = time.time()
 
     def initialize(self):
         """Initialize the service state"""
         self.state = self.repository.load()
-        return self
-
-    def validate_watchdog_alert(self, payload):
-        """Validate that a received alert is a valid watchdog alert"""
-        try:
-            if "alerts" not in payload:
-                logger.warning("Received payload without 'alerts' key")
-                return False
-
-            alerts = payload["alerts"]
-            if not alerts or not isinstance(alerts, list):
-                logger.warning("Received empty or invalid 'alerts' array")
-                return False
-
-            for alert in alerts:
-                if "labels" in alert and "alertname" in alert["labels"]:
-                    alertname = alert["labels"]["alertname"]
-                    status = alert.get("status", "unknown")
-
-                    if (
-                        alertname == self.config.expected_alertname
-                        and status == "firing"
-                    ):
-                        logger.info(
-                            f"Valid Watchdog alert received: {alertname} (status: {status})"
-                        )
-                        return alert
-
-            logger.warning("No valid Watchdog alert found in payload")
-            return False
-
-        except Exception as e:
-            logger.error(f"Error validating watchdog alert: {str(e)}")
-            return False
+        logger.info("Watchdog service initialized")
+        return self.state
 
     def process_watchdog_alert(self, payload):
-        """Process a received webhook payload"""
-        logger.debug(f"Processing alert in service instance {id(self)}")
-        with self.state_lock:
-            self.state.total_received += 1
+        """Process an incoming alert from Alertmanager"""
+        if payload is None:
+            return False, "Invalid payload: None"
 
-        if not payload:
-            with self.state_lock:
-                self.state.invalid_received += 1
-            logger.warning("Received empty payload")
-            return False, "Invalid payload"
+        # Increment total counter
+        self.state.total_received += 1
 
-        valid_alert = self.validate_watchdog_alert(payload)
-        if not valid_alert:
-            with self.state_lock:
-                self.state.invalid_received += 1
-            return False, "Received alert is not a valid watchdog alert"
+        # Validate watchdog alert format
+        if not self._validate_watchdog_alert(payload):
+            self.state.record_invalid_alert()
+            self.repository.save(self.state)
+            return False, "Invalid watchdog alert format"
 
-        # Capture current status before updating
-        with self.state_lock:
-            current_status = self.state.status
+        # Get the alert
+        alert = payload.get("alerts", [{}])[0] if "alerts" in payload else payload
 
-        # Update state with new alert data
-        with self.state_lock:
-            self.state.record_watchdog_alert(valid_alert)
-            # Explicitly update status to 'ok' when we receive a valid watchdog
-            self.state.status = "ok"
+        # Check if it's a watchdog alert
+        alertname = alert.get("labels", {}).get("alertname", "")
+        if alertname != self.config.expected_alertname:
+            logger.warning(f"Received non-watchdog alert: {alertname}")
+            self.state.record_invalid_alert()
+            self.repository.save(self.state)
+            return (
+                False,
+                f"Expected '{self.config.expected_alertname}', got '{alertname}'",
+            )
 
-        # Save updated state
+        # Valid watchdog alert received - update state
+        was_in_alert = self.state.status == "alert"
+        self.state.record_watchdog_alert(alert)
         self.repository.save(self.state)
 
-        # Send recovery notification if we were previously in alert state
-        if current_status == "alert":
+        # If we were in alert state, send recovery notification
+        if was_in_alert:
+            logger.info(
+                "Watchdog alert received after previous failure - sending recovery notification"
+            )
             self.notifier.send_recovery()
 
-        return True, "Valid watchdog alert processed"
+        return True, "Watchdog alert received and processed"
+
+    def check_watchdog_status(self):
+        """Check if the watchdog should be in alert state"""
+        if (
+            self.state.status == "initializing"
+            or self.state.status == "waiting_for_first_alert"
+        ):
+            # Skip checking on first run
+            return False
+
+        time_since_last = self.state.time_since_last_watchdog()
+
+        # If too much time has passed, enter alert state
+        if time_since_last > self.config.watchdog_timeout:
+            # Only update state if not already in alert
+            if self.state.status != "alert":
+                logger.warning(
+                    f"Watchdog timeout exceeded: {time_since_last:.1f}s > {self.config.watchdog_timeout}s"
+                )
+                self.state.set_alert_status()
+                self.repository.save(self.state)
+                return True
+
+            # If in alert state, check if we should send another notification
+            time_since_notification = self.state.time_since_last_alert_notification()
+            if time_since_notification > self.config.alert_resend_interval:
+                logger.info(
+                    f"Sending repeated alert notification after {time_since_notification:.1f}s"
+                )
+                return True
+
+        return False
+
+    def _validate_watchdog_alert(self, payload):
+        """Validate the alert has the expected format"""
+        # Basic validation for required fields
+        if isinstance(payload, dict):
+            if "alerts" in payload:
+                # Format from Alertmanager
+                if isinstance(payload["alerts"], list) and len(payload["alerts"]) > 0:
+                    return True
+            elif "labels" in payload:
+                # Direct alert format
+                return True
+        return False
 
     def get_health_status(self):
-        """Get the current health status"""
-        current_time = time.time()
+        """Get system health status - unified approach"""
+        # Calculate health based on current state and timeout
+        is_healthy = self.state.status == "ok"
 
-        with self.state_lock:
-            last_watchdog_time = self.state.last_watchdog_time
-            status = self.state.status
-            total_received = self.state.total_received
-            invalid_received = self.state.invalid_received
-
-        time_since_last = current_time - last_watchdog_time
-
-        return {
-            "status": status,
-            "last_watchdog_received": WatchdogState.format_timestamp(
-                last_watchdog_time
+        # Create a consistent health status object
+        health_status = {
+            "status": self.state.status,
+            "is_healthy": is_healthy,
+            "last_ping": self.state.last_watchdog_time,
+            "last_ping_formatted": self.state.format_timestamp(
+                self.state.last_watchdog_time
             ),
-            "seconds_since_last_watchdog": int(time_since_last),
-            "timeout_threshold": self.config.watchdog_timeout,
-            "is_healthy": time_since_last <= self.config.watchdog_timeout,
-            "total_alerts_received": total_received,
-            "invalid_alerts_received": invalid_received,
+            "time_since_last_ping": self.state.time_since_last_watchdog(),
+            "timeout": self.config.watchdog_timeout,
         }
+
+        return health_status
 
     def get_detailed_status(self):
-        """Get detailed status information"""
-        current_time = time.time()
+        """Get detailed system status"""
+        health_status = self.get_health_status()
 
-        with self.state_lock:
-            state_copy = self.state.to_dict()
+        # Add more details to the basic health status
+        detailed_status = health_status.copy()
+        detailed_status.update(
+            {
+                "total_received": self.state.total_received,
+                "invalid_received": self.state.invalid_received,
+                "last_watchdog_details": self.state.last_watchdog_details,
+                "last_status_notification": self.state.format_timestamp(
+                    self.state.last_status_notification
+                ),
+                "last_alert_notification": self.state.format_timestamp(
+                    self.state.last_alert_notification
+                ),
+                "config": {
+                    "watchdog_timeout": self.config.watchdog_timeout,
+                    "expected_alertname": self.config.expected_alertname,
+                    "alert_resend_interval": self.config.alert_resend_interval,
+                },
+            }
+        )
 
-        return {
-            "current_time": WatchdogState.format_timestamp(current_time),
-            "watchdog_state": state_copy,
-            "config": {
-                "timeout": self.config.watchdog_timeout,
-                "expected_alertname": self.config.expected_alertname,
-                "has_webhook_url": self.config.google_chat_webhook_url is not None,
-                "data_directory": self.config.data_dir,
-                "persistence_file": self.config.persistence_file,
-                "alert_resend_interval": self.config.alert_resend_interval,
-            },
-            "uptime": int(current_time - self.start_time),
-        }
+        return detailed_status
+

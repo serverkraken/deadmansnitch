@@ -1,8 +1,4 @@
 import os
-from app.logging_setup import configure_global_logging
-
-# Logging vor allem anderen konfigurieren
-log_level = configure_global_logging()
 from flask import Flask
 from app.config import Config
 from app.persistence.file_repository import FileWatchdogRepository
@@ -34,7 +30,9 @@ def create_app():
 
     # Initialize watchdog service
     watchdog_service = WatchdogService.get_instance(repository, notifier, config)
-    watchdog_service.initialize()
+    # Nur initialisieren, wenn nicht unter Gunicorn (wird sonst in gunicorn_config.py initialisiert)
+    if os.environ.get("RUNNING_IN_GUNICORN", "") == "":
+        watchdog_service.initialize()
 
     # Create Flask application
     app = Flask(__name__)
