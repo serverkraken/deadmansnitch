@@ -51,11 +51,10 @@ class WatchdogMonitor:
                 # Get current state (with lock in service)
                 service = self.watchdog_service
 
-                # Nutzen des bereits geladenen States, falls er existiert
-                # Nur laden wenn nötig
+                # Immer den neuesten State laden
                 with service.state_lock:
-                    if service.state is None:
-                        service.state = service.repository.load()
+                    # Den State immer aktualisieren mit der Methode aus dem Service
+                    service._refresh_state_if_needed()
 
                     last_watchdog_time = service.state.last_watchdog_time
                     last_status_notification = service.state.last_status_notification
@@ -84,8 +83,8 @@ class WatchdogMonitor:
                                 service.state.last_watchdog_time
                             )
 
-                        # Save state
-                        service.repository.save(service.state)
+                        # Save state with file locking
+                        service._save_state_with_lock()
 
                         # Send notification
                         self.notifier.send_alert(time_since_last, last_received)
@@ -100,8 +99,8 @@ class WatchdogMonitor:
                         with service.state_lock:
                             service.state.update_alert_notification()
 
-                        # Save state
-                        service.repository.save(service.state)
+                        # Save state with file locking
+                        service._save_state_with_lock()
 
                         # Send notification
                         self.notifier.send_repeated_alert(
@@ -116,8 +115,8 @@ class WatchdogMonitor:
                     with service.state_lock:
                         service.state.update_status_notification()
 
-                    # Save state
-                    service.repository.save(service.state)
+                    # Save state with file locking
+                    service._save_state_with_lock()
 
                     # Send notification
                     self.notifier.send_status_update(last_received)
