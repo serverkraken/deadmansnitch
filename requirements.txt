@@ -13,7 +13,7 @@ requests==2.32.2
 python-dateutil==2.8.2
 
 # Production dependencies
-setproctitle==1.3.2  # For better process naming in production
+setproctitle==1.3.5  # For better process naming in production
 
 # Testing (optional)
 pytest==7.4.2
