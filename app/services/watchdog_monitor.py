@@ -3,7 +3,7 @@ import logging
 import threading
 from app.domain.watchdog_state import WatchdogState
 
-logger = logging.getLogger("watchdog_service")
+logger = logging.getLogger("watchdog_monitor")
 
 
 class WatchdogMonitor:

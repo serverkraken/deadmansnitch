@@ -1,5 +1,7 @@
 import logging
 from threading import RLock  # RLock statt Lock verwenden
+import os
+import fcntl  # Für File-Locking
 
 logger = logging.getLogger("watchdog_service")
 
@@ -44,6 +46,9 @@ class WatchdogService:
             return False, "Invalid payload: Not a dictionary"
 
         with self.state_lock:
+            # Neuesten State laden für Multi-Prozess-Konsistenz
+            self._refresh_state_if_needed()
+
             # Increment total counter
             self.state.total_received += 1
 
@@ -70,7 +75,7 @@ class WatchdogService:
             # Valid watchdog alert received - update state
             was_in_alert = self.state.status == "alert"
             self.state.record_watchdog_alert(alert)
-            self.repository.save(self.state)
+            self._save_state_with_lock()  # Mit File-Lock speichern
 
             # If we were in alert state, send recovery notification
             if was_in_alert:
@@ -95,8 +100,23 @@ class WatchdogService:
         return False
 
     def get_health_status(self):
-        """Get system health status - unified approach"""
+        """Get system health status - unified approach with process synchronization"""
+        # Zuerst den aktuellen State aus der Persistenz laden, um prozessübergreifende Änderungen zu sehen
         with self.state_lock:
+            # In einer Multi-Prozess-Umgebung sicherstellen, dass wir den neuesten Status haben
+            self._refresh_state_if_needed()
+
+            # Explizit prüfen, ob die Zeit seit dem letzten Ping den Timeout überschritten hat
+            time_since_last = self.state.time_since_last_watchdog()
+
+            # Status aktualisieren, falls Timeout überschritten wurde
+            if time_since_last > self.config.watchdog_timeout and self.state.status != "alert":
+                logger.warning(
+                    f"Watchdog timeout exceeded in health check: {time_since_last:.1f}s > {self.config.watchdog_timeout}s"
+                )
+                self.state.set_alert_status()
+                self._save_state_with_lock()  # Mit File-Lock speichern
+
             # Calculate health based on current state and timeout
             is_healthy = self.state.status == "ok"
 
@@ -114,25 +134,48 @@ class WatchdogService:
 
         return health_status
 
+    def _refresh_state_if_needed(self):
+        """Lädt den State neu, wenn nötig für Multi-Prozess-Synchronisation"""
+        try:
+            # Prüfen, ob die Datei seit dem letzten Laden geändert wurde
+            filepath = os.path.join(self.repository.data_dir, self.repository.filename)
+            if os.path.exists(filepath):
+                mtime = os.path.getmtime(filepath)
+
+                # Wir speichern die letzte Änderungszeit der Datei
+                if not hasattr(self, '_last_file_mtime') or mtime > self._last_file_mtime:
+                    logger.debug("Refreshing state from file (modified externally)")
+                    self.state = self.repository.load()
+                    self._last_file_mtime = mtime
+        except Exception as e:
+            logger.error(f"Error refreshing state: {e}")
+
+    def _save_state_with_lock(self):
+        """Speichert den State mit File-Locking für Multi-Prozess-Sicherheit"""
+        filepath = os.path.join(self.repository.data_dir, self.repository.filename)
+        try:
+            # Stellen Sie sicher, dass das Verzeichnis existiert
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+            # Datei öffnen und exklusiven Lock setzen
+            with open(filepath, 'w') as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                # Status speichern
+                self.repository.save(self.state)
+                # Lock freigeben (passiert automatisch beim Schließen)
+
+            # Änderungszeit aktualisieren
+            self._last_file_mtime = os.path.getmtime(filepath)
+        except Exception as e:
+            logger.error(f"Error saving state with lock: {e}")
+
     def get_detailed_status(self):
         """Get detailed system status"""
+        # Zuerst health_status aktualisieren, damit der Status konsistent ist
+        health_status = self.get_health_status()
+
         with self.state_lock:
-            # Direkter Zugriff auf state innerhalb des Locks, statt get_health_status() aufzurufen
-            is_healthy = self.state.status == "ok"
-
-            # Basis-Health-Status erstellen
-            health_status = {
-                "status": self.state.status,
-                "is_healthy": is_healthy,
-                "last_ping": self.state.last_watchdog_time,
-                "last_ping_formatted": self.state.format_timestamp(
-                    self.state.last_watchdog_time
-                ),
-                "time_since_last_ping": self.state.time_since_last_watchdog(),
-                "timeout": self.config.watchdog_timeout,
-            }
-
-            # Zusätzliche Informationen
+            # Zusätzliche Informationen zum vorhandenen Health-Status hinzufügen
             detailed_status = health_status.copy()
             detailed_status.update(
                 {
