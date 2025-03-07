@@ -1,5 +1,5 @@
 import logging
-from threading import Lock
+from threading import RLock  # RLock statt Lock verwenden
 
 logger = logging.getLogger("watchdog_service")
 
@@ -9,7 +9,7 @@ class WatchdogService:
 
     # Singleton instance
     _instance = None
-    _lock = Lock()
+    _lock = RLock()  # RLock für Singleton-Pattern
 
     @classmethod
     def get_instance(cls, repository=None, notifier=None, config=None):
@@ -24,8 +24,8 @@ class WatchdogService:
         self.notifier = notifier
         self.config = config
         self.state = None
-        # Fügen Sie das fehlende state_lock-Attribut hinzu
-        self.state_lock = Lock()
+        # RLock verwenden, damit derselbe Thread den Lock mehrfach erwerben kann
+        self.state_lock = RLock()
 
     def initialize(self):
         """Initialize the service state"""
@@ -148,9 +148,22 @@ class WatchdogService:
     def get_detailed_status(self):
         """Get detailed system status"""
         with self.state_lock:
-            health_status = self.get_health_status()
+            # Direkter Zugriff auf state innerhalb des Locks, statt get_health_status() aufzurufen
+            is_healthy = self.state.status == "ok"
 
-            # Add more details to the basic health status
+            # Basis-Health-Status erstellen
+            health_status = {
+                "status": self.state.status,
+                "is_healthy": is_healthy,
+                "last_ping": self.state.last_watchdog_time,
+                "last_ping_formatted": self.state.format_timestamp(
+                    self.state.last_watchdog_time
+                ),
+                "time_since_last_ping": self.state.time_since_last_watchdog(),
+                "timeout": self.config.watchdog_timeout,
+            }
+
+            # Zusätzliche Informationen
             detailed_status = health_status.copy()
             detailed_status.update(
                 {
@@ -172,3 +185,4 @@ class WatchdogService:
             )
 
         return detailed_status
+
