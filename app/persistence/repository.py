@@ -13,9 +13,9 @@ class WatchdogRepository(ABC):
     @abstractmethod
     def load(self) -> WatchdogState:
         """Load watchdog state from storage"""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def save(self, state: WatchdogState) -> bool:
         """Save watchdog state to storage"""
-        pass
+        pass  # pragma: no cover

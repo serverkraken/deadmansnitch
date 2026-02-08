@@ -35,7 +35,7 @@ def watchdog() -> Tuple[Response, int]:
 
         # Process the alert
         if watchdog_service is None:
-             return jsonify({"status": "error", "message": "Service not initialized"}), 500
+            return jsonify({"status": "error", "message": "Service not initialized"}), 500
 
         success, message = watchdog_service.process_watchdog_alert(payload)
 
@@ -53,7 +53,7 @@ def watchdog() -> Tuple[Response, int]:
 def health_check() -> Tuple[Response, int]:
     """Health check endpoint"""
     if watchdog_service is None:
-         return jsonify({"status": "error", "message": "Service not initialized"}), 500
+        return jsonify({"status": "error", "message": "Service not initialized"}), 500
 
     health_status = watchdog_service.get_health_status()
 
@@ -68,7 +68,7 @@ def health_check() -> Tuple[Response, int]:
 def liveness_probe() -> Tuple[Response, int]:
     """Kubernetes liveness probe endpoint"""
     if kubernetes_probes is None:
-         return jsonify({"status": "error", "message": "Probes not initialized"}), 500
+        return jsonify({"status": "error", "message": "Probes not initialized"}), 500
 
     is_alive, message = kubernetes_probes.check_liveness()
     status_code = 200 if is_alive else 503
@@ -85,7 +85,7 @@ def liveness_probe() -> Tuple[Response, int]:
 def readiness_probe() -> Tuple[Response, int]:
     """Kubernetes readiness probe endpoint"""
     if kubernetes_probes is None:
-         return jsonify({"status": "error", "message": "Probes not initialized"}), 500
+        return jsonify({"status": "error", "message": "Probes not initialized"}), 500
 
     is_ready, message = kubernetes_probes.check_readiness()
     status_code = 200 if is_ready else 503
@@ -102,7 +102,7 @@ def readiness_probe() -> Tuple[Response, int]:
 def status() -> Tuple[Response, int]:
     """Detailed status endpoint"""
     if watchdog_service is None:
-         return jsonify({"status": "error", "message": "Service not initialized"}), 500
+        return jsonify({"status": "error", "message": "Service not initialized"}), 500
 
     detailed_status = watchdog_service.get_detailed_status()
     return jsonify(detailed_status), 200

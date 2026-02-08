@@ -1,11 +1,11 @@
-import json
-import pytest
+from unittest.mock import patch
+
 from flask.testing import FlaskClient
-from unittest.mock import patch, MagicMock
+
 from app.services.watchdog_service import WatchdogService
 
-class TestRoutes:
 
+class TestRoutes:
     def test_root(self, client: FlaskClient) -> None:
         """Test root endpoint returns service info"""
         response = client.get("/")
@@ -17,7 +17,7 @@ class TestRoutes:
     def test_watchdog_post_success(self, client: FlaskClient, service: WatchdogService) -> None:
         """Test successful watchdog alert processing"""
         payload = {"alerts": [{"labels": {"alertname": "Watchdog"}}]}
-        
+
         with patch.object(service, "process_watchdog_alert", return_value=(True, "Watchdog alert processed")):
             response = client.post("/watchdog", json=payload)
             assert response.status_code == 200
@@ -77,13 +77,14 @@ class TestRoutes:
     def test_routes_not_initialized(self, client: FlaskClient) -> None:
         """Test routes when service/probes are None"""
         from app.web import routes
+
         original_service = routes.watchdog_service
         original_probes = routes.kubernetes_probes
-        
+
         try:
             routes.watchdog_service = None
             routes.kubernetes_probes = None
-            
+
             assert client.post("/watchdog").status_code == 500
             assert client.get("/health").status_code == 500
             assert client.get("/probe/liveness").status_code == 500

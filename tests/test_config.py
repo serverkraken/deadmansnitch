@@ -1,10 +1,10 @@
 import os
-import logging
 from unittest.mock import patch
+
 from app.config import Config
 
+
 class TestConfig:
-    
     def test_singleton(self) -> None:
         """Test that Config is a singleton"""
         # Clear singleton for testing if it exists
@@ -36,7 +36,7 @@ class TestConfig:
             "WATCHDOG_TIMEOUT": "60",
             "EXPECTED_ALERTNAME": "CustomWatchdog",
             "ALERT_RESEND_INTERVAL": "300",
-            "GOOGLE_CHAT_WEBHOOK_URL": "http://example.com/webhook"
+            "GOOGLE_CHAT_WEBHOOK_URL": "http://example.com/webhook",
         }
         with patch.dict(os.environ, env):
             config = Config.get_instance()

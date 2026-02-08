@@ -1,10 +1,10 @@
 import shutil
 import tempfile
 from typing import Generator
-from flask import Flask
-from flask.testing import FlaskClient
 
 import pytest
+from flask import Flask
+from flask.testing import FlaskClient
 
 from app.config import Config
 from app.persistence.file_repository import FileWatchdogRepository
@@ -41,6 +41,7 @@ def repository(temp_data_dir: str) -> FileWatchdogRepository:
 def service(repository: FileWatchdogRepository, mock_config: Config) -> WatchdogService:
     """Watchdog service initialized with repo and mock config"""
     from unittest.mock import MagicMock
+
     notifier = MagicMock()
     service_instance = WatchdogService(repository, notifier, mock_config)
     service_instance.initialize()
@@ -51,7 +52,9 @@ def service(repository: FileWatchdogRepository, mock_config: Config) -> Watchdog
 def app(service: WatchdogService) -> Generator[Flask, None, None]:
     """Flask application fixture"""
     from flask import Flask
+
     from app.web.routes import init_routes
+
     app = Flask(__name__)
     app.register_blueprint(init_routes(service))
     app.config["TESTING"] = True

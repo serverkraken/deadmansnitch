@@ -58,10 +58,7 @@ class KubernetesProbes:
         monitor_threads = [
             t
             for t in all_threads
-            if any(
-                pattern in t.name.lower()
-                for pattern in ["thread-1", "watchdog", "monitor", "daemon"]
-            )
+            if any(pattern in t.name.lower() for pattern in ["thread-1", "watchdog", "monitor", "daemon"])
         ]
 
         # Method 2: Check thread count (most deployments will have 2+ threads when monitor is running)
@@ -130,20 +127,16 @@ class KubernetesProbes:
                     # functional, assume the thread is there even if we can't detect it
                     if (
                         time.time() - self.startup_time > 300
-                        and self.watchdog_service.state 
+                        and self.watchdog_service.state
                         and self.watchdog_service.state.status in ["ok", "alert"]
                     ):
-                        logger.info(
-                            "Monitor thread not detected, but service appears functional - allowing readiness"
-                        )
+                        logger.info("Monitor thread not detected, but service appears functional - allowing readiness")
                     else:
                         return False, "Not ready: Watchdog monitor thread not running"
 
             # 5. Validate that the service is in a valid status
             if self.watchdog_service.state and self.watchdog_service.state.status == "initializing":
-                if (
-                    time.time() - self.startup_time > 60
-                ):  # Should be initialized after 60s
+                if time.time() - self.startup_time > 60:  # Should be initialized after 60s
                     return False, "Service stuck in initializing state"
 
             # 6. Check if state lock is functioning

@@ -1,15 +1,15 @@
-import time
-import threading
-import pytest
 from unittest.mock import MagicMock, patch
-from app.services.watchdog_monitor import WatchdogMonitor
-from app.services.watchdog_service import WatchdogService
-from app.notifications.notifier import Notifier
+
+import pytest
+
 from app.config import Config
 from app.domain.watchdog_state import WatchdogState
+from app.notifications.notifier import Notifier
+from app.services.watchdog_monitor import WatchdogMonitor
+from app.services.watchdog_service import WatchdogService
+
 
 class TestWatchdogMonitor:
-
     @pytest.fixture
     def monitor(self, service: WatchdogService, mock_config: Config) -> WatchdogMonitor:
         notifier = MagicMock(spec=Notifier)
@@ -29,7 +29,7 @@ class TestWatchdogMonitor:
         mock_thread = MagicMock()
         mock_thread.is_alive.return_value = True
         monitor.thread = mock_thread
-        
+
         with patch("threading.Thread") as mock_new_thread:
             monitor.start()
             mock_new_thread.assert_not_called()
@@ -65,48 +65,48 @@ class TestWatchdogMonitor:
         """Test monitor triggers alert when timeout occurs"""
         monitor.config.watchdog_timeout = 60
         monitor.config.alert_resend_interval = 300
-        
+
         state = WatchdogState()
         state.last_watchdog_time = 1000.0
         state.status = "ok"
         monitor.watchdog_service.state = state
-        
+
         # startup=1000, loop_start=1100 (> 60s timeout)
         with patch("time.time", side_effect=[1000.0, 1100.0, 1100.0, 1100.0, 1100.0]):
             with patch.object(monitor.watchdog_service, "atomic_update") as mock_atomic:
                 mock_atomic.return_value.__enter__.return_value = state
-                
+
                 with patch("time.sleep", side_effect=InterruptedError()):
                     try:
                         monitor._run_monitor()
                     except InterruptedError:
                         pass
-                
+
                 assert state.status == "alert"
-                monitor.notifier.send_alert.assert_called_once()
+                monitor.notifier.send_alert.assert_called_once()  # type: ignore[attr-defined]
 
     def test_run_monitor_daily_status(self, monitor: WatchdogMonitor) -> None:
         """Test monitor sends daily status update"""
         monitor.config.watchdog_timeout = 60
-        
+
         state = WatchdogState()
-        state.last_watchdog_time = 99990.0 # Just 10s ago
-        state.last_status_notification = 1000.0 # 99000s ago (> 86400)
+        state.last_watchdog_time = 99990.0  # Just 10s ago
+        state.last_status_notification = 1000.0  # 99000s ago (> 86400)
         state.status = "ok"
         monitor.watchdog_service.state = state
-        
+
         # startup=0, loop_start=100000.0
         with patch("time.time", side_effect=[0.0, 100000.0, 100000.0, 100000.0, 100000.0]):
             with patch.object(monitor.watchdog_service, "atomic_update") as mock_atomic:
                 mock_atomic.return_value.__enter__.return_value = state
-                
+
                 with patch("time.sleep", side_effect=InterruptedError()):
                     try:
                         monitor._run_monitor()
                     except InterruptedError:
                         pass
-                
-                monitor.notifier.send_status_update.assert_called_once()
+
+                monitor.notifier.send_status_update.assert_called_once()  # type: ignore[attr-defined]
 
     def test_stop_monitor(self, monitor: WatchdogMonitor) -> None:
         # Currently no stop() method in WatchdogMonitor, it's a daemon thread.

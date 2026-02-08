@@ -7,9 +7,9 @@ class NotificationProvider(ABC):
     @abstractmethod
     def send(self, message: str) -> bool:
         """Send a notification message"""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def name(self) -> str:
         """Get the provider name"""
-        pass
+        pass  # pragma: no cover

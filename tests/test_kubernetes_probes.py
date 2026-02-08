@@ -1,12 +1,14 @@
 import time
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.domain.watchdog_state import WatchdogState
 from app.services.kubernetes_probes import KubernetesProbes
 from app.services.watchdog_service import WatchdogService
-from app.domain.watchdog_state import WatchdogState
+
 
 class TestKubernetesProbes:
-
     @pytest.fixture
     def probes(self, service: WatchdogService) -> KubernetesProbes:
         return KubernetesProbes(service)
@@ -15,7 +17,7 @@ class TestKubernetesProbes:
         """Test that probes fail during startup grace period"""
         probes.startup_time = time.time()
         probes.startup_grace_period = 10
-        
+
         is_ready, message = probes.check_readiness()
         assert is_ready is False
         assert "startup phase" in message
@@ -37,13 +39,13 @@ class TestKubernetesProbes:
 
     def test_check_readiness_success(self, probes: KubernetesProbes) -> None:
         """Test readiness check success after grace period"""
-        probes.startup_time = time.time() - 100 # Long ago
-        
+        probes.startup_time = time.time() - 100  # Long ago
+
         # Mock dependencies to pass
         state = WatchdogState()
         state.status = "ok"
         probes.watchdog_service.state = state
-        
+
         with patch.object(probes, "is_monitor_thread_running", return_value=(True, "OK")):
             with patch("os.path.join", return_value="/tmp/probe_test"):
                 with patch("builtins.open", MagicMock()):
@@ -58,38 +60,38 @@ class TestKubernetesProbes:
         state = WatchdogState()
         state.status = "initializing"
         probes.watchdog_service.state = state
-        
+
         with patch.object(probes, "is_monitor_thread_running", return_value=(True, "OK")):
-             is_ready, message = probes.check_readiness()
-             assert is_ready is False
-             assert "stuck in initializing" in message
+            is_ready, message = probes.check_readiness()
+            assert is_ready is False
+            assert "stuck in initializing" in message
 
     def test_check_readiness_monitor_stopped(self, probes: KubernetesProbes) -> None:
         """Test readiness failure when monitor thread stops after grace period"""
         probes.startup_time = time.time() - 200
         probes.startup_grace_period = 60
-        
+
         state = WatchdogState()
         state.status = "ok"
         probes.watchdog_service.state = state
-        
+
         with patch.object(probes, "is_monitor_thread_running", return_value=(False, "Stopped")):
-             is_ready, message = probes.check_readiness()
-             assert is_ready is False
-             assert "monitor thread not running" in message
+            is_ready, message = probes.check_readiness()
+            assert is_ready is False
+            assert "monitor thread not running" in message
 
     def test_check_readiness_fallback_workaround(self, probes: KubernetesProbes) -> None:
         """Test the workaround for monitor thread detection after 5 minutes"""
-        probes.startup_time = time.time() - 400 # > 300s
-        
+        probes.startup_time = time.time() - 400  # > 300s
+
         state = WatchdogState()
         state.status = "ok"
         probes.watchdog_service.state = state
-        
+
         with patch.object(probes, "is_monitor_thread_running", return_value=(False, "Stopped")):
-             is_ready, message = probes.check_readiness()
-             assert is_ready is True
-             assert "ready to receive traffic" in message
+            is_ready, message = probes.check_readiness()
+            assert is_ready is True
+            assert "ready to receive traffic" in message
 
     def test_detection_method_labels(self, probes: KubernetesProbes) -> None:
         """Test monitor detection via thread name patterns"""
@@ -106,21 +108,21 @@ class TestKubernetesProbes:
         # Only MainThread, so len=1 < 2
         with patch("threading.enumerate", return_value=[MagicMock()]):
             is_running, _ = probes.is_monitor_thread_running()
-            assert is_running is False # Not enough threads
+            assert is_running is False  # Not enough threads
 
     def test_liveness_errors(self, probes: KubernetesProbes) -> None:
         """Test liveness probe edge cases and errors"""
         probes.watchdog_service.state = None
         is_alive, _ = probes.check_liveness()
         assert is_alive is False
-        
+
         probes.watchdog_service.state = WatchdogState()
-        probes.watchdog_service.repository = None
+        probes.watchdog_service.repository = None  # type: ignore[assignment]
         is_alive, _ = probes.check_liveness()
         assert is_alive is False
-        
+
         probes.watchdog_service.repository = MagicMock()
-        probes.watchdog_service.config = None
+        probes.watchdog_service.config = None  # type: ignore[assignment]
         is_alive, _ = probes.check_liveness()
         assert is_alive is False
 
@@ -129,12 +131,12 @@ class TestKubernetesProbes:
         probes.startup_time = time.time() - 100
         probes.watchdog_service.state = WatchdogState()
         probes.watchdog_service.state.status = "ok"
-        
+
         with patch.object(probes, "is_monitor_thread_running", return_value=(True, "OK")):
             # Cause exception in context manager
             probes.watchdog_service.state_lock = MagicMock()
             probes.watchdog_service.state_lock.__enter__.side_effect = Exception("Lock error")
-            
+
             is_ready, message = probes.check_readiness()
             assert is_ready is False
-            assert "Lock error" in message # Fallback log message check could be added if captures logs
+            assert "Lock error" in message  # Fallback log message check could be added if captures logs

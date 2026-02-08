@@ -1,13 +1,14 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
 from app.notifications.notifier import Notifier
 from app.notifications.providers.base_provider import NotificationProvider
 from app.notifications.providers.google_chat import GoogleChatProvider
 
+
 class MockProvider(NotificationProvider):
     def __init__(self, name: str = "MockProvider"):
         self._name = name
-        self.sent_messages = []
+        self.sent_messages: list[str] = []
         self.should_fail = False
 
     def name(self) -> str:
@@ -19,8 +20,8 @@ class MockProvider(NotificationProvider):
         self.sent_messages.append(message)
         return True
 
-class TestNotifications:
 
+class TestNotifications:
     def test_notifier_add_provider(self) -> None:
         notifier = Notifier()
         provider = MockProvider()
@@ -33,9 +34,9 @@ class TestNotifications:
         p2 = MockProvider("P2")
         notifier.add_provider(p1)
         notifier.add_provider(p2)
-        
+
         notifier.notify_all("Hello Test")
-        
+
         assert "Hello Test" in p1.sent_messages
         assert "Hello Test" in p2.sent_messages
 
@@ -46,10 +47,10 @@ class TestNotifications:
         p2.should_fail = True
         notifier.add_provider(p1)
         notifier.add_provider(p2)
-        
+
         # Should not raise exception, but log it
         notifier.notify_all("Hello Test")
-        
+
         assert "Hello Test" in p1.sent_messages
         assert len(p2.sent_messages) == 0
 
@@ -77,14 +78,14 @@ class TestNotifications:
         assert "status" in p1.sent_messages[0]
         assert "2026-02-08 20:00:00" in p1.sent_messages[0]
 
-class TestGoogleChatProvider:
 
+class TestGoogleChatProvider:
     @patch("requests.post")
     def test_send_success(self, mock_post: MagicMock) -> None:
         mock_post.return_value.status_code = 200
         provider = GoogleChatProvider("http://webhook.url")
         success = provider.send("Test Message")
-        
+
         assert success is True
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
