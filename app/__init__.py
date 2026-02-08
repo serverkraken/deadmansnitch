@@ -1,24 +1,27 @@
+import logging
 import os
+
 from flask import Flask
+
 from app.config import Config
-from app.persistence.file_repository import FileWatchdogRepository
+from app.logging_setup import configure_global_logging
 from app.notifications.notifier import Notifier
 from app.notifications.providers.google_chat import GoogleChatProvider
-from app.services.watchdog_service import WatchdogService
+from app.persistence.file_repository import FileWatchdogRepository
 from app.services.watchdog_monitor import WatchdogMonitor
+from app.services.watchdog_service import WatchdogService
 from app.web.routes import init_routes
 
 
-def create_app():
+def create_app() -> Flask:
     """Application factory"""
     # Initialize configuration
     config = Config.get_instance()
-    logger = config.configure_logging()
+    configure_global_logging()
+    logger = logging.getLogger("watchdog_service")
 
     # Initialize persistence
-    repository = FileWatchdogRepository(
-        config.data_dir, os.path.basename(config.persistence_file)
-    )
+    repository = FileWatchdogRepository(config.data_dir, os.path.basename(config.persistence_file))
 
     # Initialize notification system
     notifier = Notifier()
@@ -30,9 +33,8 @@ def create_app():
 
     # Initialize watchdog service
     watchdog_service = WatchdogService.get_instance(repository, notifier, config)
-    # Nur initialisieren, wenn nicht unter Gunicorn (wird sonst in gunicorn_config.py initialisiert)
-    if os.environ.get("RUNNING_IN_GUNICORN", "") == "":
-        watchdog_service.initialize()
+    # Always initialize the service to ensure state is loaded
+    watchdog_service.initialize()
 
     # Create Flask application
     app = Flask(__name__)
@@ -47,8 +49,8 @@ def create_app():
         logger.info("Started watchdog monitor thread in standalone mode")
 
     logger.info(
-        f"Starting Watchdog Service (timeout: {config.watchdog_timeout}s, expected alertname: {config.expected_alertname})"
+        f"Starting Watchdog Service (timeout: {config.watchdog_timeout}s, "
+        f"expected alertname: {config.expected_alertname})"
     )
 
     return app
-

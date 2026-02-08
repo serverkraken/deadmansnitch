@@ -6,15 +6,20 @@ RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
 # Set work directory
 WORKDIR /app
 
-# Create requirements.txt file
-COPY requirements.txt .
+# Install Poetry and dependencies
+# We use curl for healthcheck and pip to install poetry
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  curl \
+  && pip install poetry \
+  && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency files
+COPY pyproject.toml poetry.lock ./
 
 # Install dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  curl gcc python3-dev \
-  && pip install --no-cache-dir -r requirements.txt \
-  && apt-get purge -y --auto-remove gcc python3-dev \
-  && rm -rf /var/lib/apt/lists/*
+# Disable virtualenvs validation since we are in a container
+RUN poetry config virtualenvs.create false \
+  && poetry install --without dev --no-interaction --no-ansi
 
 # Copy application code
 COPY app/ /app/app/
