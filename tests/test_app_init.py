@@ -26,7 +26,7 @@ class TestAppInit:
 
         with patch.dict(
             os.environ,
-            {"DATA_DIR": "/tmp/test_data", "PERSISTENCE_FILE": "watchdog.json", "WATCHDOG_TIMEOUT_SECONDS": "60"},
+            {"DATA_DIR": "/tmp/test_data", "PERSISTENCE_FILE": "watchdog.json", "WATCHDOG_TIMEOUT": "60"},
             clear=True,
         ):
             # Ensure Config singleton is reset or updated
@@ -39,6 +39,11 @@ class TestAppInit:
 
             # Verify dependencies initialization
             mock_repo_cls.assert_called_once()
+            # Check arguments (data_dir, filename, log_interval)
+            call_args = mock_repo_cls.call_args
+            # Default timeout is 3600 (not set in env specific to this test run which clears env)
+            # Actually we clear env but set WATCHDOG_TIMEOUT_SECONDS=60 in patch.dict above
+            assert call_args[1].get("log_interval") == 60.0 or call_args[0][2] == 60.0
             mock_notifier_cls.assert_called_once()
             mock_service_cls.get_instance.assert_called_once()
             mock_service_instance.initialize.assert_called_once()

@@ -62,11 +62,15 @@ class TestGunicornHooks:
         # Configure mocks
         mock_config = mock_config_get.return_value
         mock_config.google_chat_webhook_url = "http://chat"
+        mock_config.watchdog_timeout = 3600
         
         when_ready(server)
         
         # Verify initializations
         mock_repo_cls.assert_called_once()
+        # Check arguments (data_dir, filename, log_interval)
+        call_args = mock_repo_cls.call_args
+        assert call_args[1].get("log_interval") == 3600.0 or call_args[0][2] == 3600.0
         mock_notifier_cls.assert_called_once()
         mock_service_get.assert_called_once()
         mock_monitor_cls.assert_called_once()

@@ -98,7 +98,12 @@ def when_ready(server: Any) -> None:
         config = Config.get_instance()
 
         # Initialize persistence
-        repository = FileWatchdogRepository(config.data_dir, os.path.basename(config.persistence_file))
+        # Initialize persistence
+        repository = FileWatchdogRepository(
+            config.data_dir,
+            os.path.basename(config.persistence_file),
+            log_interval=float(config.watchdog_timeout),
+        )
 
         # Initialize notification system
         notifier = Notifier()

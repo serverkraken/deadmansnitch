@@ -21,7 +21,12 @@ def create_app() -> Flask:
     logger = logging.getLogger("watchdog_service")
 
     # Initialize persistence
-    repository = FileWatchdogRepository(config.data_dir, os.path.basename(config.persistence_file))
+    # Initialize persistence
+    repository = FileWatchdogRepository(
+        config.data_dir,
+        os.path.basename(config.persistence_file),
+        log_interval=float(config.watchdog_timeout),
+    )
 
     # Initialize notification system
     notifier = Notifier()

@@ -10,7 +10,7 @@ class TestFileWatchdogRepository:
     def test_ensure_data_directory(self, temp_data_dir: str) -> None:
         """Test that data directory is created if missing"""
         new_dir = os.path.join(temp_data_dir, "new_subdir")
-        FileWatchdogRepository(new_dir, "test.json")
+        FileWatchdogRepository(new_dir, "test.json", log_interval=60.0)
         assert os.path.exists(new_dir)
 
     def test_save_and_load(self, repository: FileWatchdogRepository) -> None:
@@ -30,14 +30,14 @@ class TestFileWatchdogRepository:
 
     def test_load_non_existent_file(self, temp_data_dir: str) -> None:
         """Test loading when the file doesn't exist (initialization)"""
-        repo = FileWatchdogRepository(temp_data_dir, "missing.json")
+        repo = FileWatchdogRepository(temp_data_dir, "missing.json", log_interval=60.0)
         state = repo.load()
         assert state.status == "waiting_for_first_alert"
         assert os.path.exists(os.path.join(temp_data_dir, "missing.json"))
 
     def test_load_corrupted_json(self, temp_data_dir: str) -> None:
         """Test recovery from corrupted JSON file"""
-        repo = FileWatchdogRepository(temp_data_dir, "corrupt.json")
+        repo = FileWatchdogRepository(temp_data_dir, "corrupt.json", log_interval=60.0)
         filepath = os.path.join(temp_data_dir, "corrupt.json")
 
         with open(filepath, "w") as f:

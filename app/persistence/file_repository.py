@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 
 from app.domain.watchdog_state import WatchdogState
 from app.persistence.repository import WatchdogRepository
@@ -8,11 +9,16 @@ from app.persistence.repository import WatchdogRepository
 logger = logging.getLogger("watchdog_service")
 
 
+
+
+
 class FileWatchdogRepository(WatchdogRepository):
     """File-based implementation of the watchdog repository"""
 
-    def __init__(self, data_dir: str, filename: str) -> None:
+    def __init__(self, data_dir: str, filename: str, log_interval: float = 300.0) -> None:
         super().__init__(data_dir, filename)
+        self.log_interval = log_interval
+        self._last_log_time = 0.0
         self._ensure_data_directory()
 
     def _ensure_data_directory(self) -> None:
@@ -34,18 +40,26 @@ class FileWatchdogRepository(WatchdogRepository):
                 with open(filepath, "r") as f:
                     saved_state = json.load(f)
                     state.from_dict(saved_state)
-                logger.info(
-                    f"Loaded watchdog state: Last alert received at "
-                    f"{WatchdogState.format_timestamp(state.last_watchdog_time)}"
-                )
+                
+                current_time = time.time()
+                if current_time - self._last_log_time >= self.log_interval:
+                    logger.info(
+                        f"Loaded watchdog state: Last alert received at "
+                        f"{WatchdogState.format_timestamp(state.last_watchdog_time)}"
+                    )
+                    self._last_log_time = current_time
+                else:
+                    logger.debug(
+                        f"Loaded watchdog state: Last alert received at "
+                        f"{WatchdogState.format_timestamp(state.last_watchdog_time)}"
+                    )
+
             except Exception as e:
                 logger.error(f"Error loading watchdog state: {e}")
                 # Initialize with current time as fallback
                 state.last_watchdog_time = state.last_status_notification = state.last_alert_notification = 0.0
         else:
             # Initialize with current time for new state
-            import time
-
             current_time = time.time()
             state.last_watchdog_time = current_time
             state.last_status_notification = current_time
