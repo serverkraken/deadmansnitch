@@ -33,9 +33,11 @@ class TestKubernetesProbes:
         # Initially thread is None in service, let's mock the service check
         with patch.object(probes.watchdog_service, "get_detailed_status") as mock_status:
             mock_status.return_value = {"monitor_thread": {"is_alive": False, "name": "None"}}
-            is_running, message = probes.is_monitor_thread_running()
-            assert is_running is False
-            assert "No monitor thread found" in message
+            # Also mock enumerate to ensure no stray threads are detected
+            with patch("threading.enumerate", return_value=[]):
+                is_running, message = probes.is_monitor_thread_running()
+                assert is_running is False
+                assert "No monitor thread found" in message
 
     def test_check_readiness_success(self, probes: KubernetesProbes) -> None:
         """Test readiness check success after grace period"""

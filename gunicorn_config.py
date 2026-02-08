@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+import logging
 import os
 from typing import Any
 
@@ -26,6 +26,16 @@ threads = 2
 worker_class = "gthread"
 timeout = 120
 
+
+
+
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "GET /probe/" in record.getMessage():
+            return os.getenv("LOG_LEVEL", "info").upper() == "DEBUG"
+        return True
+
+
 # Gunicorn logging configuration
 logconfig_dict = {
     "version": 1,
@@ -36,11 +46,17 @@ logconfig_dict = {
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
+    "filters": {
+        "healthcheck": {
+            "()": HealthCheckFilter,
+        }
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "unified",
             "stream": "ext://sys.stdout",
+            "filters": ["healthcheck"],
         },
     },
     "loggers": {
