@@ -90,9 +90,7 @@ class WatchdogState:
 
     @staticmethod
     def format_timestamp(timestamp: float) -> str:
-        """Format a timestamp as a human-readable string in UTC"""
+        """Format a timestamp as a human-readable string"""
         if timestamp == 0:
             return "never"
-        from datetime import timezone
-
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
