@@ -9,9 +9,6 @@ from app.persistence.repository import WatchdogRepository
 logger = logging.getLogger("watchdog_service")
 
 
-
-
-
 class FileWatchdogRepository(WatchdogRepository):
     """File-based implementation of the watchdog repository"""
 
@@ -40,7 +37,7 @@ class FileWatchdogRepository(WatchdogRepository):
                 with open(filepath, "r") as f:
                     saved_state = json.load(f)
                     state.from_dict(saved_state)
-                
+
                 current_time = time.time()
                 if current_time - self._last_log_time >= self.log_interval:
                     logger.info(

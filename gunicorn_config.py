@@ -27,8 +27,6 @@ worker_class = "gthread"
 timeout = 120
 
 
-
-
 class HealthCheckFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if "GET /probe/" in record.getMessage():

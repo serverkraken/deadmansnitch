@@ -55,17 +55,17 @@ class TestGunicornHooks:
     ) -> None:
         """Test when_ready hook initializes everything"""
         server = MagicMock()
-        
+
         # Reset global state
         gunicorn_config.monitor_thread_started = False
-        
+
         # Configure mocks
         mock_config = mock_config_get.return_value
         mock_config.google_chat_webhook_url = "http://chat"
         mock_config.watchdog_timeout = 3600
-        
+
         when_ready(server)
-        
+
         # Verify initializations
         mock_repo_cls.assert_called_once()
         # Check arguments (data_dir, filename, log_interval)
@@ -75,7 +75,7 @@ class TestGunicornHooks:
         mock_service_get.assert_called_once()
         mock_monitor_cls.assert_called_once()
         mock_monitor_cls.return_value.start.assert_called_once()
-        
+
         # Verify idempotency
         when_ready(server)
         mock_monitor_cls.return_value.start.assert_called_once()  # Still called only once
