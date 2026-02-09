@@ -1,5 +1,5 @@
 # Web framework
-Flask==3.1.1
+Flask==3.1.2
 Jinja2==3.1.6  # Specify exact Jinja2 version
 
 # WSGI HTTP Server
