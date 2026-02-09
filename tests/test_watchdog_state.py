@@ -60,4 +60,4 @@ class TestWatchdogState:
 
     def test_format_timestamp(self) -> None:
         assert WatchdogState.format_timestamp(0) == "never"
-        assert WatchdogState.format_timestamp(1700000000) == "2023-11-14 23:13:20"
+        assert WatchdogState.format_timestamp(1700000000) == "2023-11-14 22:13:20"
