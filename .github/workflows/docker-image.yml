@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'feature/**'
   pull_request:
     branches:
       - main
@@ -12,6 +13,9 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
 
     steps:
     - name: Checkout repository
@@ -27,6 +31,17 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Extract metadata (tags, labels) for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=raw,value=latest,enable=${{ github.ref == 'format:refs/heads/main' }}
+          type=sha,format=short
+          type=ref,event=branch
+          type=ref,event=pr
+
     - name: Cache Docker layers
       uses: actions/cache@v4
       with:
@@ -35,27 +50,25 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-buildx-
 
-    - name: Extract short commit SHA
-      id: vars
-      run: echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
         context: .
         push: true
-        tags: |
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ env.short_sha }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
         platforms: linux/amd64,linux/arm64
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
 
     - name: Create GitHub Tag
+      if: github.ref == 'refs/heads/main'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         git config --global user.name 'github-actions'
         git config --global user.email 'github-actions@github.com'
-        git tag ${GITHUB_REF##*/}-${{ env.short_sha }}
-        git push origin ${GITHUB_REF##*/}-${{ env.short_sha }}
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        TAG_NAME="${GITHUB_REF##*/}-$SHORT_SHA"
+        git tag $TAG_NAME
+        git push origin $TAG_NAME

@@ -1,20 +1,24 @@
-import os
 import json
 import logging
-from app.persistence.repository import WatchdogRepository
+import os
+import time
+
 from app.domain.watchdog_state import WatchdogState
+from app.persistence.repository import WatchdogRepository
 
 logger = logging.getLogger("watchdog_service")
 
+
 class FileWatchdogRepository(WatchdogRepository):
     """File-based implementation of the watchdog repository"""
-    
-    def __init__(self, data_dir, filename):
-        self.data_dir = data_dir
-        self.filename = filename
+
+    def __init__(self, data_dir: str, filename: str, log_interval: float = 300.0) -> None:
+        super().__init__(data_dir, filename)
+        self.log_interval = log_interval
+        self._last_log_time = 0.0
         self._ensure_data_directory()
-        
-    def _ensure_data_directory(self):
+
+    def _ensure_data_directory(self) -> None:
         """Ensure the data directory exists"""
         if not os.path.exists(self.data_dir):
             try:
@@ -22,43 +26,67 @@ class FileWatchdogRepository(WatchdogRepository):
                 logger.info(f"Created data directory at {self.data_dir}")
             except Exception as e:
                 logger.error(f"Failed to create data directory: {e}")
-                
-    def load(self):
+
+    def load(self) -> WatchdogState:
         """Load watchdog state from file"""
         state = WatchdogState()
         filepath = os.path.join(self.data_dir, self.filename)
-        
+
         if os.path.exists(filepath):
             try:
                 with open(filepath, "r") as f:
                     saved_state = json.load(f)
                     state.from_dict(saved_state)
-                logger.info(
-                    f"Loaded watchdog state: Last alert received at {WatchdogState.format_timestamp(state.last_watchdog_time)}"
-                )
+
+                current_time = time.time()
+                if current_time - self._last_log_time >= self.log_interval:
+                    logger.info(
+                        f"Loaded watchdog state: Last alert received at "
+                        f"{WatchdogState.format_timestamp(state.last_watchdog_time)}"
+                    )
+                    self._last_log_time = current_time
+                else:
+                    logger.debug(
+                        f"Loaded watchdog state: Last alert received at "
+                        f"{WatchdogState.format_timestamp(state.last_watchdog_time)}"
+                    )
+
             except Exception as e:
                 logger.error(f"Error loading watchdog state: {e}")
                 # Initialize with current time as fallback
-                state.last_watchdog_time = state.last_status_notification = state.last_alert_notification = 0
+                state.last_watchdog_time = state.last_status_notification = state.last_alert_notification = 0.0
         else:
             # Initialize with current time for new state
-            import time
             current_time = time.time()
             state.last_watchdog_time = current_time
             state.last_status_notification = current_time
             state.status = "waiting_for_first_alert"
             self.save(state)
-            
+
         return state
-        
-    def save(self, state):
-        """Save watchdog state to file"""
+
+    def save(self, state: WatchdogState) -> bool:
+        """Save watchdog state to file atomically"""
         try:
             filepath = os.path.join(self.data_dir, self.filename)
-            with open(filepath, "w") as f:
+            tmp_filepath = f"{filepath}.tmp"
+
+            # Write to temp file first
+            with open(tmp_filepath, "w") as f:
                 json.dump(state.to_dict(), f)
+                f.flush()
+                os.fsync(f.fileno())  # Ensure data is written to disk
+
+            # Rename temp file to actual file (atomic operation on POSIX)
+            os.replace(tmp_filepath, filepath)
+
             logger.debug(f"Saved watchdog state to {filepath}")
             return True
         except Exception as e:
             logger.error(f"Error saving watchdog state: {e}")
+            if "tmp_filepath" in locals() and os.path.exists(tmp_filepath):
+                try:
+                    os.remove(tmp_filepath)
+                except OSError:
+                    pass
             return False

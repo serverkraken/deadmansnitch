@@ -1,8 +1,11 @@
 import logging
-import threading
 import os
+import threading
 import time
 import traceback
+from typing import Tuple
+
+from app.services.watchdog_service import WatchdogService
 
 logger = logging.getLogger("watchdog_service.kubernetes")
 
@@ -10,15 +13,15 @@ logger = logging.getLogger("watchdog_service.kubernetes")
 class KubernetesProbes:
     """Handle Kubernetes liveness and readiness probes"""
 
-    def __init__(self, watchdog_service):
+    def __init__(self, watchdog_service: WatchdogService) -> None:
         self.watchdog_service = watchdog_service
-        self.startup_time = time.time()
+        self.startup_time: float = time.time()
         # Initial phase: 30 seconds for startup processes
-        self.startup_grace_period = 30
+        self.startup_grace_period: int = 30
         # Flag to indicate if we've seen the monitor thread at least once
-        self.monitor_thread_detected = False
+        self.monitor_thread_detected: bool = False
 
-    def check_liveness(self):
+    def check_liveness(self) -> Tuple[bool, str]:
         """
         Liveness probe checks if the service is running and
         has not entered an undefined state.
@@ -45,7 +48,7 @@ class KubernetesProbes:
             logger.error(f"Liveness check error: {str(e)}\n{traceback.format_exc()}")
             return False, f"Liveness check failed: {str(e)}"
 
-    def is_monitor_thread_running(self):
+    def is_monitor_thread_running(self) -> Tuple[bool, str]:
         """Check if the watchdog monitor thread is running using multiple detection methods"""
         all_threads = threading.enumerate()
         thread_names = [t.name for t in all_threads]
@@ -55,22 +58,16 @@ class KubernetesProbes:
         monitor_threads = [
             t
             for t in all_threads
-            if any(
-                pattern in t.name.lower()
-                for pattern in ["thread-1", "watchdog", "monitor", "daemon"]
-            )
+            if any(pattern in t.name.lower() for pattern in ["thread-1", "watchdog", "monitor", "daemon"])
         ]
 
         # Method 2: Check thread count (most deployments will have 2+ threads when monitor is running)
         has_sufficient_threads = len(all_threads) >= 2
 
         # Method 3: Check if the expected behavior is present (last watchdog time is being updated)
-        if hasattr(self.watchdog_service, "state") and self.watchdog_service.state:
-            last_updated = (
-                getattr(self.watchdog_service.state, "last_watchdog_time", 0) > 0
-            )
-        else:
-            last_updated = False
+        last_updated = False
+        if self.watchdog_service.state:
+            last_updated = getattr(self.watchdog_service.state, "last_watchdog_time", 0.0) > 0.0
 
         # If we've ever detected the thread before, be more lenient
         if monitor_threads or (has_sufficient_threads and last_updated):
@@ -84,7 +81,7 @@ class KubernetesProbes:
 
         return False, f"No monitor thread found (threads: {thread_names})"
 
-    def check_readiness(self):
+    def check_readiness(self) -> Tuple[bool, str]:
         """
         Readiness probe checks if the service is ready
         to process requests and function properly.
@@ -102,7 +99,8 @@ class KubernetesProbes:
             if time.time() - self.startup_time < self.startup_grace_period:
                 return (
                     False,
-                    f"Service still in startup phase ({int(time.time() - self.startup_time)}s/{self.startup_grace_period}s)",
+                    f"Service still in startup phase "
+                    f"({int(time.time() - self.startup_time)}s/{self.startup_grace_period}s)",
                 )
 
             # 3. Check access to file system
@@ -129,19 +127,16 @@ class KubernetesProbes:
                     # functional, assume the thread is there even if we can't detect it
                     if (
                         time.time() - self.startup_time > 300
+                        and self.watchdog_service.state
                         and self.watchdog_service.state.status in ["ok", "alert"]
                     ):
-                        logger.info(
-                            "Monitor thread not detected, but service appears functional - allowing readiness"
-                        )
+                        logger.info("Monitor thread not detected, but service appears functional - allowing readiness")
                     else:
-                        return False, f"Not ready: Watchdog monitor thread not running"
+                        return False, "Not ready: Watchdog monitor thread not running"
 
             # 5. Validate that the service is in a valid status
-            if self.watchdog_service.state.status == "initializing":
-                if (
-                    time.time() - self.startup_time > 60
-                ):  # Should be initialized after 60s
+            if self.watchdog_service.state and self.watchdog_service.state.status == "initializing":
+                if time.time() - self.startup_time > 60:  # Should be initialized after 60s
                     return False, "Service stuck in initializing state"
 
             # 6. Check if state lock is functioning
@@ -156,4 +151,3 @@ class KubernetesProbes:
         except Exception as e:
             logger.error(f"Readiness check error: {str(e)}\n{traceback.format_exc()}")
             return False, f"Readiness check failed: {str(e)}"
-
