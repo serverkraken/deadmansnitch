@@ -1,26 +1,45 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:base"],
-  "packageRules": [
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+  ],
+  packageRules: [
     {
-      "matchManagers": ["pip_requirements", "poetry", "setup-cfg", "dockerfile"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true
+      matchManagers: [
+        'pip_requirements',
+        'poetry',
+        'setup-cfg',
+        'dockerfile',
+      ],
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+      ],
+      automerge: true,
     },
     {
-      "matchManagers": ["pip_requirements", "poetry", "setup-cfg", "dockerfile"],
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    }
+      matchManagers: [
+        'pip_requirements',
+        'poetry',
+        'setup-cfg',
+        'dockerfile',
+      ],
+      matchUpdateTypes: [
+        'major',
+      ],
+      automerge: false,
+    },
   ],
-  "pip_requirements": {
-    "enabled": true
+  pip_requirements: {
+    enabled: true,
   },
-  "poetry": {
-    "enabled": true
+  poetry: {
+    enabled: true,
   },
-  "dockerfile": {
-    "enabled": true
+  dockerfile: {
+    enabled: true,
   },
-  "schedule": ["at 02:00 on Monday"]
+  schedule: [
+    'at 02:00 on Monday',
+  ],
 }
