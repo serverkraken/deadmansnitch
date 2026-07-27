@@ -1,0 +1,42 @@
+name: release
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+  security-events: write
+  actions: read
+
+jobs:
+  release-please:
+    uses: serverkraken/reusable-workflows/.github/workflows/semantic-release.yml@v4
+    secrets: inherit
+
+  docker-build:
+    needs: [release-please]
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: serverkraken/reusable-workflows/.github/workflows/docker-build.yml@v4
+    with:
+      dockerfile: Dockerfile
+      image_name: serverkraken/deadmansnitch
+      tag: ${{ needs.release-please.outputs.tag_name }}
+      sign: ${{ fromJSON(vars.SK_SIGN || 'true') }}
+      attest: ${{ fromJSON(vars.SK_ATTEST || 'true') }}
+      sbom: ${{ fromJSON(vars.SK_SBOM || 'true') }}
+    secrets: inherit
+
+  scan:
+    needs: [docker-build]
+    uses: serverkraken/reusable-workflows/.github/workflows/trivy-image.yml@v4
+    with:
+      image_ref: ${{ needs.docker-build.outputs.image_ref }}
+      severity: ${{ vars.SK_TRIVY_SEVERITY || 'HIGH,CRITICAL' }}
+      trivy_version: ${{ vars.SK_TRIVY_VERSION || '' }}
+    secrets: inherit

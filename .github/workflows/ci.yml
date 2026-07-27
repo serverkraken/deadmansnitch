@@ -1,49 +1,29 @@
-name: CI
-
+name: ci
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v6
+  secscan:
+    uses: serverkraken/reusable-workflows/.github/workflows/trivy-fs.yml@v4
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      severity: ${{ vars.SK_TRIVY_SEVERITY || 'HIGH,CRITICAL' }}
+      trivy_version: ${{ vars.SK_TRIVY_VERSION || '' }}
+    secrets: inherit
 
-    - name: Set up Python 3.13
-      uses: actions/setup-python@v6
-      with:
-        python-version: "3.13"
-
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-
-    - name: Load cached venv
-      id: cached-poetry-dependencies
-      uses: actions/cache@v5
-      with:
-        path: .venv
-        key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
-
-    - name: Install dependencies
-      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      run: poetry install --no-interaction --no-root
-
-    - name: Install library
-      run: poetry install --no-interaction
-
-    - name: Lint with Ruff
-      run: |
-        poetry run ruff check .
-        poetry run ruff format --check .
-
-    - name: Type check with Mypy
-      run: poetry run mypy .
-
-    - name: Test with Pytest
-      run: poetry run pytest --cov=app --cov-report=xml tests/
+  lint-python-root:
+    uses: serverkraken/reusable-workflows/.github/workflows/lint-python.yml@v4
+    with:
+      working_directory: .
+      python_version: ${{ vars.SK_PYTHON_VERSION || '' }}
+    secrets: inherit
+  test-python-root:
+    uses: serverkraken/reusable-workflows/.github/workflows/test-python.yml@v4
+    with:
+      working_directory: .
+      python_version: ${{ vars.SK_PYTHON_VERSION || '' }}
+      coverage_threshold: ${{ fromJSON(vars.SK_COVERAGE_THRESHOLD || '80') }}
+    secrets: inherit
