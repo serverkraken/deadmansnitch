@@ -39,6 +39,13 @@
   dockerfile: {
     enabled: true,
   },
+  lockFileMaintenance: {
+    enabled: true,
+    automerge: true,
+    schedule: [
+      'at 02:00 on Monday',
+    ],
+  },
   schedule: [
     'at 02:00 on Monday',
   ],
