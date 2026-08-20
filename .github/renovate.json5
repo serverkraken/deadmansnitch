@@ -39,6 +39,18 @@
   dockerfile: {
     enabled: true,
   },
+  // Keeps the Dockerfile's poetry pin in sync: the dockerfile manager only
+  // bumps FROM lines, and lockFileMaintenance regenerates poetry.lock with
+  // newer Poetry versions, so the pin would silently drift otherwise
+  customManagers: [
+    {
+      customType: 'regex',
+      managerFilePatterns: ['/^Dockerfile$/'],
+      matchStrings: ['pip install --no-cache-dir poetry==(?<currentValue>[\\d.]+)'],
+      depNameTemplate: 'poetry',
+      datasourceTemplate: 'pypi',
+    },
+  ],
   lockFileMaintenance: {
     enabled: true,
     automerge: true,
