@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/serverkraken/deadmansnitch/compare/v0.1.2...v0.1.3) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docker:** multi-stage build without pip/poetry in the runtime image ([#70](https://github.com/serverkraken/deadmansnitch/issues/70)) ([95be96d](https://github.com/serverkraken/deadmansnitch/commit/95be96d240f49d217261b2ce8e557c67eb4c09a7))
+
 ## [0.1.2](https://github.com/serverkraken/deadmansnitch/compare/v0.1.1...v0.1.2) (2026-08-20)
 
 
