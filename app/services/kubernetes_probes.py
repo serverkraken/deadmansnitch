@@ -1,10 +1,10 @@
 import logging
 import os
-import threading
 import time
 import traceback
 from typing import Tuple
 
+from app.services.watchdog_monitor import WatchdogMonitor
 from app.services.watchdog_service import WatchdogService
 
 logger = logging.getLogger("watchdog_service.kubernetes")
@@ -13,13 +13,15 @@ logger = logging.getLogger("watchdog_service.kubernetes")
 class KubernetesProbes:
     """Handle Kubernetes liveness and readiness probes"""
 
+    # Monitor writes its heartbeat at least every 30s; anything older means
+    # the monitor thread is dead or stuck
+    HEARTBEAT_MAX_AGE = 90.0
+
     def __init__(self, watchdog_service: WatchdogService) -> None:
         self.watchdog_service = watchdog_service
         self.startup_time: float = time.time()
         # Initial phase: 30 seconds for startup processes
         self.startup_grace_period: int = 30
-        # Flag to indicate if we've seen the monitor thread at least once
-        self.monitor_thread_detected: bool = False
 
     def check_liveness(self) -> Tuple[bool, str]:
         """
@@ -49,37 +51,23 @@ class KubernetesProbes:
             return False, f"Liveness check failed: {str(e)}"
 
     def is_monitor_thread_running(self) -> Tuple[bool, str]:
-        """Check if the watchdog monitor thread is running using multiple detection methods"""
-        all_threads = threading.enumerate()
-        thread_names = [t.name for t in all_threads]
-        logger.debug(f"Current threads: {thread_names}")
+        """Check monitor liveness via its heartbeat file.
 
-        # Method 1: Check for typical thread names
-        monitor_threads = [
-            t
-            for t in all_threads
-            if any(pattern in t.name.lower() for pattern in ["thread-1", "watchdog", "monitor", "daemon"])
-        ]
+        The monitor may live in the gunicorn master while probes run in a
+        worker, so thread introspection cannot see it - the heartbeat file
+        works across process boundaries.
+        """
+        heartbeat_path = os.path.join(self.watchdog_service.repository.data_dir, WatchdogMonitor.HEARTBEAT_FILENAME)
+        try:
+            with open(heartbeat_path) as f:
+                heartbeat = float(f.read().strip())
+        except (OSError, ValueError) as e:
+            return False, f"No monitor heartbeat found: {e}"
 
-        # Method 2: Check thread count (most deployments will have 2+ threads when monitor is running)
-        has_sufficient_threads = len(all_threads) >= 2
-
-        # Method 3: Check if the expected behavior is present (last watchdog time is being updated)
-        last_updated = False
-        if self.watchdog_service.state:
-            last_updated = getattr(self.watchdog_service.state, "last_watchdog_time", 0.0) > 0.0
-
-        # If we've ever detected the thread before, be more lenient
-        if monitor_threads or (has_sufficient_threads and last_updated):
-            self.monitor_thread_detected = True
-            return True, "Monitor thread detected"
-
-        if self.monitor_thread_detected:
-            # We've seen it before, so if we have sufficient threads, assume it's still there
-            if has_sufficient_threads:
-                return True, "Monitor assumed running (previously detected)"
-
-        return False, f"No monitor thread found (threads: {thread_names})"
+        age = time.time() - heartbeat
+        if age > self.HEARTBEAT_MAX_AGE:
+            return False, f"Monitor heartbeat stale ({age:.0f}s old)"
+        return True, f"Monitor heartbeat fresh ({age:.0f}s old)"
 
     def check_readiness(self) -> Tuple[bool, str]:
         """
@@ -112,27 +100,17 @@ class KubernetesProbes:
                 os.remove(test_file_path)
             except Exception as e:
                 logger.warning(f"File system check failed: {str(e)}")
-                # Don't fail readiness only because of filesystem issues
-                # return False, f"File system not writable: {str(e)}"
+                # An unwritable data dir means state and alerts cannot be
+                # persisted - the pod must not receive traffic
+                return False, f"File system not writable: {str(e)}"
 
-            # 4. Check if the monitor thread is running (with improved detection)
+            # 4. Check if the monitor thread is running (via heartbeat)
             # Only after grace period to allow for startup
             if time.time() - self.startup_time > self.startup_grace_period:
                 thread_running, thread_msg = self.is_monitor_thread_running()
                 if not thread_running:
                     logger.warning(f"Monitor thread check: {thread_msg}")
-
-                    # TEMPORARY WORKAROUND:
-                    # If the service has been running for more than 5 minutes and seems otherwise
-                    # functional, assume the thread is there even if we can't detect it
-                    if (
-                        time.time() - self.startup_time > 300
-                        and self.watchdog_service.state
-                        and self.watchdog_service.state.status in ["ok", "alert"]
-                    ):
-                        logger.info("Monitor thread not detected, but service appears functional - allowing readiness")
-                    else:
-                        return False, "Not ready: Watchdog monitor thread not running"
+                    return False, f"Not ready: Watchdog monitor thread not running ({thread_msg})"
 
             # 5. Validate that the service is in a valid status
             if self.watchdog_service.state and self.watchdog_service.state.status == "initializing":

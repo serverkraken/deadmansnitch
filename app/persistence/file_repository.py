@@ -53,8 +53,16 @@ class FileWatchdogRepository(WatchdogRepository):
 
             except Exception as e:
                 logger.error(f"Error loading watchdog state: {e}")
-                # Initialize with current time as fallback
-                state.last_watchdog_time = state.last_status_notification = state.last_alert_notification = 0.0
+                # Reset to current time so a corrupt file cannot trigger an
+                # immediate false alert; counters cannot be recovered
+                state = WatchdogState()
+                current_time = time.time()
+                state.last_watchdog_time = current_time
+                state.last_status_notification = current_time
+                state.status = "waiting_for_first_alert"
+                # Replace the corrupt file, otherwise every load would reset
+                # the timer again and the watchdog could never time out
+                self.save(state)
         else:
             # Initialize with current time for new state
             current_time = time.time()

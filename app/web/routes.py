@@ -39,10 +39,12 @@ def watchdog() -> Tuple[Response, int]:
 
         success, message = watchdog_service.process_watchdog_alert(payload)
 
-        if not success and payload is None:
-            return jsonify({"status": "error", "message": message}), 400
+        if success:
+            return jsonify({"status": "success", "message": message}), 200
 
-        return jsonify({"status": "success" if success else "warning", "message": message}), 200
+        # Alertmanager does not retry on 4xx, and a 400 surfaces the
+        # misconfiguration in its failure metrics instead of hiding it
+        return jsonify({"status": "error", "message": message}), 400
 
     except Exception as e:
         logger.error(f"Error processing watchdog request: {str(e)}")
