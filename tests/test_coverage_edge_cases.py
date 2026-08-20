@@ -68,7 +68,7 @@ class TestCoverageEdgeCases:
             assert "Not ready: Liveness failed" in message
 
     def test_probes_readiness_filesystem_fail(self, service_mock: MagicMock) -> None:
-        """Test readiness check with filesystem error (should only warn)"""
+        """Test readiness check fails when the data dir is not writable"""
         probes = KubernetesProbes(service_mock)
         service_mock.repository.data_dir = "/tmp/test"
 
@@ -84,8 +84,9 @@ class TestCoverageEdgeCases:
                     service_mock.state.status = "ok"
 
                     success, message = probes.check_readiness()
-                    # It catches exception and logs warning, but proceeds
-                    assert success is True
+                    # Unwritable filesystem means state cannot be persisted
+                    assert success is False
+                    assert "File system not writable" in message
 
     def test_probes_readiness_exception(self, service_mock: MagicMock) -> None:
         """Test readiness check global exception handling"""
@@ -95,17 +96,17 @@ class TestCoverageEdgeCases:
             assert success is False
             assert "Readiness check failed" in message
 
-    def test_is_monitor_thread_running_previously_detected(self, service_mock: MagicMock) -> None:
-        """Test monitor thread assumed running if previously detected and sufficient threads exist"""
+    def test_is_monitor_thread_running_unreadable_heartbeat(self, service_mock: MagicMock, tmp_path: Any) -> None:
+        """Test monitor detection with an unreadable/garbage heartbeat file"""
         probes = KubernetesProbes(service_mock)
-        probes.monitor_thread_detected = True
+        service_mock.repository.data_dir = str(tmp_path)
 
-        # Mock threading.enumerate to return enough threads but none with expected name
-        dummy_threads = [MagicMock(name="other-1"), MagicMock(name="other-2")]
-        with patch("threading.enumerate", return_value=dummy_threads):
-            success, message = probes.is_monitor_thread_running()
-            assert success is True
-            assert "Monitor assumed running" in message
+        heartbeat = tmp_path / WatchdogMonitor.HEARTBEAT_FILENAME
+        heartbeat.write_text("not-a-timestamp")
+
+        success, message = probes.is_monitor_thread_running()
+        assert success is False
+        assert "No monitor heartbeat found" in message
 
     # --- WatchdogService Edge Cases ---
 
@@ -198,16 +199,10 @@ class TestCoverageEdgeCases:
 
         service_mock.atomic_update = mock_atomic_update
         service_mock.state = state
+        service_mock.repository.load.return_value = state
+        notifier_mock.send_repeated_alert.return_value = True
 
-        # Mock time.time to return [startup_time, loop_iteration_time]
-        with patch("time.time", side_effect=[1000.0, 1100.0]):
-            # We want sleep to raise to break loop on first call (end of loop)
-            with patch("time.sleep", side_effect=Exception("BreakLoop")):
-                try:
-                    monitor._run_monitor()
-                except Exception as e:
-                    if str(e) != "BreakLoop":
-                        raise
+        monitor._tick(1100.0)
 
         # Check if repeated alert was sent
         notifier_mock.send_repeated_alert.assert_called()

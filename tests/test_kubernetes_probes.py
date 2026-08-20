@@ -29,15 +29,10 @@ class TestKubernetesProbes:
         assert "Service is alive" in message
 
     def test_is_monitor_thread_running_not_started(self, probes: KubernetesProbes) -> None:
-        """Test detection when monitor thread is not running"""
-        # Initially thread is None in service, let's mock the service check
-        with patch.object(probes.watchdog_service, "get_detailed_status") as mock_status:
-            mock_status.return_value = {"monitor_thread": {"is_alive": False, "name": "None"}}
-            # Also mock enumerate to ensure no stray threads are detected
-            with patch("threading.enumerate", return_value=[]):
-                is_running, message = probes.is_monitor_thread_running()
-                assert is_running is False
-                assert "No monitor thread found" in message
+        """Test detection when the monitor never wrote a heartbeat"""
+        is_running, message = probes.is_monitor_thread_running()
+        assert is_running is False
+        assert "No monitor heartbeat found" in message
 
     def test_check_readiness_success(self, probes: KubernetesProbes) -> None:
         """Test readiness check success after grace period"""
@@ -82,8 +77,8 @@ class TestKubernetesProbes:
             assert is_ready is False
             assert "monitor thread not running" in message
 
-    def test_check_readiness_fallback_workaround(self, probes: KubernetesProbes) -> None:
-        """Test the workaround for monitor thread detection after 5 minutes"""
+    def test_check_readiness_no_workaround_after_5_minutes(self, probes: KubernetesProbes) -> None:
+        """A dead monitor must fail readiness even long after startup"""
         probes.startup_time = time.time() - 400  # > 300s
 
         state = WatchdogState()
@@ -92,25 +87,32 @@ class TestKubernetesProbes:
 
         with patch.object(probes, "is_monitor_thread_running", return_value=(False, "Stopped")):
             is_ready, message = probes.check_readiness()
-            assert is_ready is True
-            assert "ready to receive traffic" in message
+            assert is_ready is False
+            assert "monitor thread not running" in message
 
-    def test_detection_method_labels(self, probes: KubernetesProbes) -> None:
-        """Test monitor detection via thread name patterns"""
-        mock_thread = MagicMock()
-        mock_thread.name = "WatchdogMonitor"
-        with patch("threading.enumerate", return_value=[mock_thread]):
-            is_running, _ = probes.is_monitor_thread_running()
-            assert is_running is True
-            assert probes.monitor_thread_detected is True
+    def test_detection_fresh_heartbeat(self, probes: KubernetesProbes) -> None:
+        """Test monitor detection via a fresh heartbeat file"""
+        self._write_heartbeat(probes, time.time())
+        is_running, message = probes.is_monitor_thread_running()
+        assert is_running is True
+        assert "fresh" in message
 
-    def test_detection_method_previous_success(self, probes: KubernetesProbes) -> None:
-        """Test monitor assumed running if previously detected and threads are enough"""
-        probes.monitor_thread_detected = True
-        # Only MainThread, so len=1 < 2
-        with patch("threading.enumerate", return_value=[MagicMock()]):
-            is_running, _ = probes.is_monitor_thread_running()
-            assert is_running is False  # Not enough threads
+    def test_detection_stale_heartbeat(self, probes: KubernetesProbes) -> None:
+        """Test monitor detection rejects a stale heartbeat"""
+        self._write_heartbeat(probes, time.time() - probes.HEARTBEAT_MAX_AGE - 10)
+        is_running, message = probes.is_monitor_thread_running()
+        assert is_running is False
+        assert "stale" in message
+
+    @staticmethod
+    def _write_heartbeat(probes: KubernetesProbes, timestamp: float) -> None:
+        import os
+
+        from app.services.watchdog_monitor import WatchdogMonitor
+
+        path = os.path.join(probes.watchdog_service.repository.data_dir, WatchdogMonitor.HEARTBEAT_FILENAME)
+        with open(path, "w") as f:
+            f.write(str(timestamp))
 
     def test_liveness_errors(self, probes: KubernetesProbes) -> None:
         """Test liveness probe edge cases and errors"""

@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 
@@ -43,9 +44,11 @@ class TestFileWatchdogRepository:
         with open(filepath, "w") as f:
             f.write("{ invalid json")
 
+        before = time.time()
         state = repo.load()
-        # Should return a default state (last_watchdog_time = 0.0)
-        assert state.last_watchdog_time == 0.0
+        # Recovery resets to current time so no immediate false alert fires
+        assert state.last_watchdog_time >= before
+        assert state.status == "waiting_for_first_alert"
 
     def test_save_failure_directory_removed(self, temp_data_dir: str) -> None:
         """Test save behavior when directory is read-only or invalid"""

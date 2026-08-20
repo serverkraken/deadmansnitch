@@ -56,9 +56,8 @@ class WatchdogState:
         return self
 
     def record_invalid_alert(self) -> "WatchdogState":
-        """Record receipt of an invalid alert"""
+        """Record receipt of an invalid alert (total_received is counted at ingress)"""
         self.invalid_received += 1
-        self.total_received += 1
         return self
 
     def update_status_notification(self) -> "WatchdogState":

@@ -3,6 +3,10 @@ from abc import ABC, abstractmethod
 from app.domain.watchdog_state import WatchdogState
 
 
+class StatePersistenceError(Exception):
+    """Raised when the watchdog state cannot be persisted"""
+
+
 class WatchdogRepository(ABC):
     """Abstract repository for persisting watchdog state"""
 

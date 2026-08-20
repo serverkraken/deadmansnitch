@@ -43,7 +43,8 @@ class TestWatchdogState:
         state = WatchdogState()
         state.record_invalid_alert()
         assert state.invalid_received == 1
-        assert state.total_received == 1
+        # total_received is counted once at ingress, not here
+        assert state.total_received == 0
 
     def test_update_notifications(self) -> None:
         state = WatchdogState()
