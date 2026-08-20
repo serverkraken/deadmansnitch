@@ -30,7 +30,7 @@ class FileWatchdogRepository(WatchdogRepository):
     def load(self) -> WatchdogState:
         """Load watchdog state from file"""
         state = WatchdogState()
-        filepath = os.path.join(self.data_dir, self.filename)
+        filepath = self.filepath
 
         if os.path.exists(filepath):
             try:
@@ -52,9 +52,15 @@ class FileWatchdogRepository(WatchdogRepository):
                     )
 
             except Exception as e:
-                logger.error(f"Error loading watchdog state: {e}")
-                # Reset to current time so a corrupt file cannot trigger an
-                # immediate false alert; counters cannot be recovered
+                # Resetting the timer buys a full extra timeout during which
+                # a live outage stays invisible - this must be loud and the
+                # evidence must survive for forensics
+                logger.critical(
+                    f"Watchdog state file corrupt ({e}) - resetting timer; a "
+                    f"running outage stays undetected until a full timeout "
+                    f"elapses again. Corrupt file preserved as {filepath}.corrupt"
+                )
+                self._preserve_corrupt_file(filepath)
                 state = WatchdogState()
                 current_time = time.time()
                 state.last_watchdog_time = current_time
@@ -73,10 +79,18 @@ class FileWatchdogRepository(WatchdogRepository):
 
         return state
 
+    def _preserve_corrupt_file(self, filepath: str) -> None:
+        """Move the corrupt file aside so its content and mtime survive for
+        forensics (best effort)"""
+        try:
+            os.replace(filepath, f"{filepath}.corrupt")
+        except OSError as e:
+            logger.error(f"Could not preserve corrupt state file: {e}")
+
     def save(self, state: WatchdogState) -> bool:
         """Save watchdog state to file atomically"""
         try:
-            filepath = os.path.join(self.data_dir, self.filename)
+            filepath = self.filepath
             tmp_filepath = f"{filepath}.tmp"
 
             # Write to temp file first
@@ -87,6 +101,7 @@ class FileWatchdogRepository(WatchdogRepository):
 
             # Rename temp file to actual file (atomic operation on POSIX)
             os.replace(tmp_filepath, filepath)
+            self._fsync_directory()
 
             logger.debug(f"Saved watchdog state to {filepath}")
             return True
@@ -98,3 +113,16 @@ class FileWatchdogRepository(WatchdogRepository):
                 except OSError:
                     pass
             return False
+
+    def _fsync_directory(self) -> None:
+        """Make the rename durable: without an fsync on the directory the
+        new directory entry may be lost on power failure (best effort -
+        not every filesystem supports it)"""
+        try:
+            dir_fd = os.open(self.data_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError as e:
+            logger.debug(f"Directory fsync not possible: {e}")

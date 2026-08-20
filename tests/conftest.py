@@ -1,3 +1,4 @@
+import os
 import shutil
 import tempfile
 from typing import Generator
@@ -11,6 +12,15 @@ from app.persistence.file_repository import FileWatchdogRepository
 from app.services.watchdog_service import WatchdogService
 
 
+@pytest.fixture(autouse=True)
+def _isolate_singletons() -> Generator[None, None, None]:
+    """Reset process-wide singletons after every test so no test can leak
+    mutated global state into another (order-dependent test outcomes)"""
+    yield
+    Config._instance = None
+    WatchdogService._instance = None
+
+
 @pytest.fixture
 def temp_data_dir() -> Generator[str, None, None]:
     """Create a temporary data directory for tests"""
@@ -21,13 +31,15 @@ def temp_data_dir() -> Generator[str, None, None]:
 
 @pytest.fixture
 def mock_config(temp_data_dir: str) -> Config:
-    """Mock configuration with temp data dir"""
-    config = Config.get_instance()
-    # Override values for testing
+    """Fresh Config with temp data dir; installed as the singleton for the
+    duration of the test (the autouse fixture clears it afterwards)"""
+    config = Config()
     config.data_dir = temp_data_dir
+    config.persistence_file = os.path.join(temp_data_dir, "watchdog_state.json")
     config.watchdog_timeout = 60
     config.expected_alertname = "Watchdog"
     config.alert_resend_interval = 300
+    Config._instance = config
     return config
 
 

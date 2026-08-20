@@ -10,9 +10,9 @@ from app.notifications.providers.google_chat import GoogleChatProvider
 
 class TestAppInit:
     @patch("app.WatchdogMonitor")
-    @patch("app.WatchdogService")
-    @patch("app.Notifier")
-    @patch("app.FileWatchdogRepository")
+    @patch("app.bootstrap.WatchdogService")
+    @patch("app.bootstrap.Notifier")
+    @patch("app.bootstrap.FileWatchdogRepository")
     def test_create_app_basic(
         self,
         mock_repo_cls: MagicMock,
@@ -41,17 +41,15 @@ class TestAppInit:
             mock_repo_cls.assert_called_once()
             # Check arguments (data_dir, filename, log_interval)
             call_args = mock_repo_cls.call_args
-            # Default timeout is 3600 (not set in env specific to this test run which clears env)
-            # Actually we clear env but set WATCHDOG_TIMEOUT_SECONDS=60 in patch.dict above
             assert call_args[1].get("log_interval") == 60.0 or call_args[0][2] == 60.0
             mock_notifier_cls.assert_called_once()
             mock_service_cls.get_instance.assert_called_once()
             mock_service_instance.initialize.assert_called_once()
 
     @patch("app.WatchdogMonitor")
-    @patch("app.WatchdogService")
-    @patch("app.Notifier")
-    @patch("app.FileWatchdogRepository")
+    @patch("app.bootstrap.WatchdogService")
+    @patch("app.bootstrap.Notifier")
+    @patch("app.bootstrap.FileWatchdogRepository")
     def test_create_app_with_google_chat(
         self,
         mock_repo_cls: MagicMock,
@@ -72,9 +70,9 @@ class TestAppInit:
             assert isinstance(args[0], GoogleChatProvider)
 
     @patch("app.WatchdogMonitor")
-    @patch("app.WatchdogService")
-    @patch("app.Notifier")
-    @patch("app.FileWatchdogRepository")
+    @patch("app.bootstrap.WatchdogService")
+    @patch("app.bootstrap.Notifier")
+    @patch("app.bootstrap.FileWatchdogRepository")
     def test_create_app_standalone_mode(
         self,
         mock_repo_cls: MagicMock,
@@ -85,7 +83,6 @@ class TestAppInit:
         """Test app creation in standalone mode (starts monitor)"""
         # The condition in __init__.py is: if not os.environ.get("RUNNING_IN_GUNICORN", ""):
         # So we need to ensure RUNNING_IN_GUNICORN is NOT set.
-        # However, pytest environment might be tricky.
 
         with patch.dict(os.environ, {}, clear=True):
             Config._instance = None  # Reset config
@@ -96,9 +93,9 @@ class TestAppInit:
             mock_monitor_cls.return_value.start.assert_called_once()
 
     @patch("app.WatchdogMonitor")
-    @patch("app.WatchdogService")
-    @patch("app.Notifier")
-    @patch("app.FileWatchdogRepository")
+    @patch("app.bootstrap.WatchdogService")
+    @patch("app.bootstrap.Notifier")
+    @patch("app.bootstrap.FileWatchdogRepository")
     def test_create_app_gunicorn_mode(
         self,
         mock_repo_cls: MagicMock,

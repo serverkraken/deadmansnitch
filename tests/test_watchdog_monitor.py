@@ -47,18 +47,16 @@ class TestWatchdogMonitor:
             mock_init.assert_called_once()
 
     def test_run_monitor_grace_period(self, monitor: WatchdogMonitor) -> None:
-        """Test monitor respects grace period"""
-        monitor.config.watchdog_timeout = 60
-        # 1. startup_time = 1000
-        # 2. loop start current_time = 1010
-        # Difference 10 < 60 -> enters grace period sleep
-        with patch("time.time", side_effect=[1000.0, 1010.0, 1010.0, 1010.0]):
-            with patch("time.sleep", side_effect=InterruptedError()) as mock_sleep:
-                try:
-                    monitor._run_monitor()
-                except InterruptedError:
-                    pass
-                mock_sleep.assert_any_call(30)
+        """Test monitor respects grace period: no tick while grace remains"""
+        with patch.object(monitor, "_compute_grace_period", return_value=60.0):
+            with patch.object(monitor, "_tick") as mock_tick:
+                with patch("time.sleep", side_effect=InterruptedError()) as mock_sleep:
+                    try:
+                        monitor._run_monitor()
+                    except InterruptedError:
+                        pass
+        mock_tick.assert_not_called()
+        mock_sleep.assert_any_call(min(30.0, monitor._tick_interval))
 
     def test_run_monitor_trigger_alert(self, monitor: WatchdogMonitor) -> None:
         """Test monitor triggers alert when timeout occurs"""

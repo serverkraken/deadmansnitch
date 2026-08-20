@@ -14,12 +14,16 @@ class KubernetesProbes:
     """Handle Kubernetes liveness and readiness probes"""
 
     # Monitor writes its heartbeat at least every 30s; anything older means
-    # the monitor thread is dead or stuck
+    # the monitor thread is dead or stuck. Deliberately wall-clock: the
+    # heartbeat file crosses process (and potentially reboot) boundaries,
+    # where monotonic clocks are not comparable
     HEARTBEAT_MAX_AGE = 90.0
 
     def __init__(self, watchdog_service: WatchdogService) -> None:
         self.watchdog_service = watchdog_service
-        self.startup_time: float = time.time()
+        # Monotonic: the startup grace window must not stretch or collapse
+        # on NTP steps or clock corrections
+        self.startup_time: float = time.monotonic()
         # Initial phase: 30 seconds for startup processes
         self.startup_grace_period: int = 30
 
@@ -84,11 +88,11 @@ class KubernetesProbes:
                 return False, f"Not ready: {message}"
 
             # 2. Check if the startup phase is complete
-            if time.time() - self.startup_time < self.startup_grace_period:
+            if time.monotonic() - self.startup_time < self.startup_grace_period:
                 return (
                     False,
                     f"Service still in startup phase "
-                    f"({int(time.time() - self.startup_time)}s/{self.startup_grace_period}s)",
+                    f"({int(time.monotonic() - self.startup_time)}s/{self.startup_grace_period}s)",
                 )
 
             # 3. Check access to file system
@@ -106,7 +110,7 @@ class KubernetesProbes:
 
             # 4. Check if the monitor thread is running (via heartbeat)
             # Only after grace period to allow for startup
-            if time.time() - self.startup_time > self.startup_grace_period:
+            if time.monotonic() - self.startup_time > self.startup_grace_period:
                 thread_running, thread_msg = self.is_monitor_thread_running()
                 if not thread_running:
                     logger.warning(f"Monitor thread check: {thread_msg}")
@@ -114,7 +118,7 @@ class KubernetesProbes:
 
             # 5. Validate that the service is in a valid status
             if self.watchdog_service.state and self.watchdog_service.state.status == "initializing":
-                if time.time() - self.startup_time > 60:  # Should be initialized after 60s
+                if time.monotonic() - self.startup_time > 60:  # Should be initialized after 60s
                     return False, "Service stuck in initializing state"
 
             # 6. Check if state lock is functioning

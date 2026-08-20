@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 
 from app.domain.watchdog_state import WatchdogState
@@ -13,6 +14,12 @@ class WatchdogRepository(ABC):
     def __init__(self, data_dir: str, filename: str) -> None:
         self.data_dir = data_dir
         self.filename = filename
+
+    @property
+    def filepath(self) -> str:
+        """Canonical path of the state file; derived paths (lock file,
+        corrupt backup) must build on this single join"""
+        return os.path.join(self.data_dir, self.filename)
 
     @abstractmethod
     def load(self) -> WatchdogState:

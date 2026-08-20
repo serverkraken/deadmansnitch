@@ -1,12 +1,15 @@
+import hmac
 import json
 import logging
 import time
 from typing import Optional, Tuple
 
 from flask import Blueprint, Response, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from app.services.kubernetes_probes import KubernetesProbes
 from app.services.watchdog_service import WatchdogService
+from app.version import __version__
 
 bp = Blueprint("routes", __name__)
 logger = logging.getLogger("watchdog_service")
@@ -23,10 +26,28 @@ def init_routes(service: WatchdogService) -> Blueprint:
     return bp
 
 
+def _authorized() -> bool:
+    """Check the optional shared-secret token; without a configured token
+    every request passes (backward compatible)"""
+    if watchdog_service is None:
+        return True
+    token = watchdog_service.config.auth_token
+    if not token:
+        return True
+    auth_header = request.headers.get("Authorization", "")
+    expected = f"Bearer {token}"
+    return hmac.compare_digest(auth_header.encode(), expected.encode())
+
+
 @bp.route("/watchdog", methods=["POST"])
 def watchdog() -> Tuple[Response, int]:
     """Endpoint for Alertmanager webhook"""
     try:
+        if not _authorized():
+            # Without auth, any client with network reach could forge
+            # liveness pings and permanently silence the dead-man's switch
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
         # Get JSON payload
         payload = request.get_json(silent=True)
 
@@ -46,9 +67,14 @@ def watchdog() -> Tuple[Response, int]:
         # misconfiguration in its failure metrics instead of hiding it
         return jsonify({"status": "error", "message": message}), 400
 
-    except Exception as e:
-        logger.error(f"Error processing watchdog request: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except HTTPException:
+        # Let Flask render its own errors (e.g. 413 for oversized bodies)
+        raise
+    except Exception:
+        # Details go to the log only - this endpoint may be reachable by
+        # unauthenticated callers
+        logger.error("Error processing watchdog request", exc_info=True)
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 
 @bp.route("/health", methods=["GET"])
@@ -116,7 +142,7 @@ def root() -> Tuple[Response, int]:
     return jsonify(
         {
             "service": "Alertmanager Watchdog Service",
-            "version": "2.0.0",
+            "version": __version__,
             "status": "running",
             "endpoints": [
                 {

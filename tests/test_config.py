@@ -19,28 +19,29 @@ class TestConfig:
         Config._instance = None
         with patch.dict(os.environ, {}, clear=True):
             config = Config.get_instance()
-            # Note: app/config.py defaults for log_level_name is DEBUG in __init__
-            assert config.log_level_name == "DEBUG"
             assert config.data_dir == "/app/data"
             assert config.watchdog_timeout == 3600
             assert config.expected_alertname == "Watchdog"
             assert config.alert_resend_interval == 21600
             assert config.google_chat_webhook_url is None
+            assert config.monitor_interval == 15.0
+            assert config.max_content_length == 65536
+            assert config.auth_token is None
 
     def test_env_overrides(self) -> None:
         """Test that environment variables override defaults"""
         Config._instance = None
         env = {
-            "LOG_LEVEL": "INFO",
             "DATA_DIR": "/tmp/custom_data",
             "WATCHDOG_TIMEOUT": "60",
             "EXPECTED_ALERTNAME": "CustomWatchdog",
             "ALERT_RESEND_INTERVAL": "300",
             "GOOGLE_CHAT_WEBHOOK_URL": "http://example.com/webhook",
+            "WATCHDOG_AUTH_TOKEN": "s3cret",
         }
         with patch.dict(os.environ, env):
             config = Config.get_instance()
-            assert config.log_level_name == "INFO"
+            assert config.auth_token == "s3cret"
             assert config.data_dir == "/tmp/custom_data"
             assert config.watchdog_timeout == 60
             assert config.expected_alertname == "CustomWatchdog"

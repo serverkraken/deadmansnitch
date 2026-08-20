@@ -99,4 +99,7 @@ class TestRoutes:
         with patch.object(service, "process_watchdog_alert", side_effect=Exception("Unexpected error")):
             response = client.post("/watchdog", json={})
             assert response.status_code == 500
-            assert "Unexpected error" in response.get_json()["message"]
+            # Internal details must not leak to (potentially
+            # unauthenticated) callers
+            assert "Unexpected error" not in response.get_json()["message"]
+            assert response.get_json()["message"] == "Internal server error"

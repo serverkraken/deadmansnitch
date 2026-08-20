@@ -15,7 +15,7 @@ class TestKubernetesProbes:
 
     def test_startup_grace_period(self, probes: KubernetesProbes) -> None:
         """Test that probes fail during startup grace period"""
-        probes.startup_time = time.time()
+        probes.startup_time = time.monotonic()
         probes.startup_grace_period = 10
 
         is_ready, message = probes.check_readiness()
@@ -36,7 +36,7 @@ class TestKubernetesProbes:
 
     def test_check_readiness_success(self, probes: KubernetesProbes) -> None:
         """Test readiness check success after grace period"""
-        probes.startup_time = time.time() - 100  # Long ago
+        probes.startup_time = time.monotonic() - 100  # Long ago
 
         # Mock dependencies to pass
         state = WatchdogState()
@@ -53,7 +53,7 @@ class TestKubernetesProbes:
 
     def test_check_readiness_initializing(self, probes: KubernetesProbes) -> None:
         """Test readiness failure when stuck in initializing"""
-        probes.startup_time = time.time() - 100
+        probes.startup_time = time.monotonic() - 100
         state = WatchdogState()
         state.status = "initializing"
         probes.watchdog_service.state = state
@@ -65,7 +65,7 @@ class TestKubernetesProbes:
 
     def test_check_readiness_monitor_stopped(self, probes: KubernetesProbes) -> None:
         """Test readiness failure when monitor thread stops after grace period"""
-        probes.startup_time = time.time() - 200
+        probes.startup_time = time.monotonic() - 200
         probes.startup_grace_period = 60
 
         state = WatchdogState()
@@ -79,7 +79,7 @@ class TestKubernetesProbes:
 
     def test_check_readiness_no_workaround_after_5_minutes(self, probes: KubernetesProbes) -> None:
         """A dead monitor must fail readiness even long after startup"""
-        probes.startup_time = time.time() - 400  # > 300s
+        probes.startup_time = time.monotonic() - 400  # > 300s
 
         state = WatchdogState()
         state.status = "ok"
@@ -132,7 +132,7 @@ class TestKubernetesProbes:
 
     def test_readiness_lock_failure(self, probes: KubernetesProbes) -> None:
         """Test readiness failure when state lock is broken"""
-        probes.startup_time = time.time() - 100
+        probes.startup_time = time.monotonic() - 100
         probes.watchdog_service.state = WatchdogState()
         probes.watchdog_service.state.status = "ok"
 
