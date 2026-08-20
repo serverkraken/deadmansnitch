@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/serverkraken/deadmansnitch/compare/v0.1.3...v0.1.4) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docker:** multi-stage build without pip/poetry in the runtime image ([#72](https://github.com/serverkraken/deadmansnitch/issues/72)) ([5077b1e](https://github.com/serverkraken/deadmansnitch/commit/5077b1ea20ed71ab529889b14a5b2861931c09c7))
+* **watchdog:** resolve full-codebase audit findings (18 + fsync) ([#73](https://github.com/serverkraken/deadmansnitch/issues/73)) ([851da4b](https://github.com/serverkraken/deadmansnitch/commit/851da4b20184b66a559d6822ffdeb255d5a635ab))
+
 ## [0.1.3](https://github.com/serverkraken/deadmansnitch/compare/v0.1.2...v0.1.3) (2026-08-20)
 
 
