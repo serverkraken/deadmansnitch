@@ -1,6 +1,6 @@
 [project]
 name = "deadmansnitch"
-version = "0.1.1"
+version = "0.1.2"
 description = "Deadmansnitch is a monitoring tool designed to ensure that your scheduled tasks are running correctly."
 authors = [
     {name = "Your Name", email = "you@example.com"},
