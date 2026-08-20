@@ -77,7 +77,7 @@ class TestCoverageEdgeCases:
             # Also mock liveness to pass
             with patch.object(probes, "check_liveness", return_value=(True, "OK")):
                 # And startup time
-                probes.startup_time = time.time() - 100
+                probes.startup_time = time.monotonic() - 100
                 # And monitor thread check
                 with patch.object(probes, "is_monitor_thread_running", return_value=(True, "OK")):
                     # And state
@@ -179,6 +179,7 @@ class TestCoverageEdgeCases:
         """Test monitor loop repeat alert logic"""
         config_mock.watchdog_timeout = 60
         config_mock.alert_resend_interval = 300
+        config_mock.monitor_interval = 1.0
         monitor = WatchdogMonitor(service_mock, notifier_mock, config_mock)
 
         # Setup state
@@ -210,8 +211,14 @@ class TestCoverageEdgeCases:
     def test_monitor_grace_period(
         self, config_mock: MagicMock, service_mock: MagicMock, notifier_mock: MagicMock
     ) -> None:
-        """Test monitor loop usage of grace period"""
+        """During the startup grace period no timeout checks run"""
         config_mock.watchdog_timeout = 60
+        config_mock.monitor_interval = 1.0
+        service_mock.repository.data_dir = "/tmp/test"
+        # Fresh ping relative to the mocked clock -> full grace period
+        state = WatchdogState()
+        state.last_watchdog_time = 100.0
+        service_mock.repository.load.return_value = state
         monitor = WatchdogMonitor(service_mock, notifier_mock, config_mock)
         service_mock.state = MagicMock()
 
@@ -219,12 +226,7 @@ class TestCoverageEdgeCases:
         atomic_update_mock = MagicMock()
         service_mock.atomic_update = atomic_update_mock
 
-        # Sequence: startup_time call, then current_time call in loop
-        # We need two iterations to cover 'continue'
-        # 1. startup = 100
-        # 2. iter1 current = 110 (diff 10 < 60) -> sleep(30) -> continue
-        # 3. iter2 current = 120 (diff 20 < 60) -> sleep(30) -> RAISE
-        with patch("time.time", side_effect=[100.0, 110.0, 120.0]):
+        with patch("time.time", return_value=100.0):
             with patch("time.sleep", side_effect=[None, Exception("BreakLoop")]):
                 try:
                     monitor._run_monitor()
@@ -232,6 +234,7 @@ class TestCoverageEdgeCases:
                     pass
 
         atomic_update_mock.assert_not_called()
+        notifier_mock.send_alert.assert_not_called()
 
     # --- Notifier Edge Cases ---
 

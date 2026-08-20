@@ -40,40 +40,29 @@ class TestHealthCheckFilter:
 
 
 class TestGunicornHooks:
-    @patch("gunicorn_config.Config.get_instance")
-    @patch("gunicorn_config.FileWatchdogRepository")
-    @patch("gunicorn_config.Notifier")
-    @patch("gunicorn_config.WatchdogService.get_instance")
+    @patch("gunicorn_config.build_services")
     @patch("gunicorn_config.WatchdogMonitor")
     def test_when_ready(
         self,
         mock_monitor_cls: MagicMock,
-        mock_service_get: MagicMock,
-        mock_notifier_cls: MagicMock,
-        mock_repo_cls: MagicMock,
-        mock_config_get: MagicMock,
+        mock_build_services: MagicMock,
     ) -> None:
-        """Test when_ready hook initializes everything"""
+        """Test when_ready hook initializes everything via the shared
+        composition root"""
         server = MagicMock()
 
         # Reset global state
         gunicorn_config.monitor_thread_started = False
 
-        # Configure mocks
-        mock_config = mock_config_get.return_value
-        mock_config.google_chat_webhook_url = "http://chat"
-        mock_config.watchdog_timeout = 3600
+        mock_config = MagicMock()
+        mock_notifier = MagicMock()
+        mock_service = MagicMock()
+        mock_build_services.return_value = (mock_config, mock_notifier, mock_service)
 
         when_ready(server)
 
-        # Verify initializations
-        mock_repo_cls.assert_called_once()
-        # Check arguments (data_dir, filename, log_interval)
-        call_args = mock_repo_cls.call_args
-        assert call_args[1].get("log_interval") == 3600.0 or call_args[0][2] == 3600.0
-        mock_notifier_cls.assert_called_once()
-        mock_service_get.assert_called_once()
-        mock_monitor_cls.assert_called_once()
+        mock_build_services.assert_called_once()
+        mock_monitor_cls.assert_called_once_with(mock_service, mock_notifier, mock_config)
         mock_monitor_cls.return_value.start.assert_called_once()
 
         # Verify idempotency

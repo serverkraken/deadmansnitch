@@ -14,6 +14,9 @@ class WatchdogState:
         self.invalid_received: int = 0
         self.last_status_notification: float = 0
         self.last_alert_notification: float = 0
+        # True while a recovery notification is owed but not yet delivered;
+        # survives restarts so a failed send is retried by the monitor
+        self.recovery_pending: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert state to a dictionary for serialization"""
@@ -25,6 +28,7 @@ class WatchdogState:
             "invalid_received": self.invalid_received,
             "last_status_notification": self.last_status_notification,
             "last_alert_notification": self.last_alert_notification,
+            "recovery_pending": self.recovery_pending,
         }
 
     def from_dict(self, data: Optional[Dict[str, Any]]) -> "WatchdogState":
@@ -39,17 +43,24 @@ class WatchdogState:
         self.invalid_received = data.get("invalid_received", self.invalid_received)
         self.last_status_notification = data.get("last_status_notification", self.last_status_notification)
         self.last_alert_notification = data.get("last_alert_notification", self.last_alert_notification)
+        self.recovery_pending = bool(data.get("recovery_pending", self.recovery_pending))
         return self
 
     def record_watchdog_alert(self, alert_data: Dict[str, Any]) -> "WatchdogState":
         """Record a received watchdog alert"""
         current_time = time.time()
+        # Senders may put null or junk in optional fields; a valid ping must
+        # be recorded regardless
+        labels = alert_data.get("labels")
+        labels = labels if isinstance(labels, dict) else {}
+        annotations = alert_data.get("annotations")
+        annotations = annotations if isinstance(annotations, dict) else {}
         self.last_watchdog_time = current_time
         self.last_watchdog_details = {
-            "alertname": alert_data.get("labels", {}).get("alertname", "unknown"),
+            "alertname": labels.get("alertname", "unknown"),
             "status": alert_data.get("status", "unknown"),
-            "summary": alert_data.get("annotations", {}).get("summary", "No summary provided"),
-            "description": alert_data.get("annotations", {}).get("description", "No description provided"),
+            "summary": annotations.get("summary", "No summary provided"),
+            "description": annotations.get("description", "No description provided"),
             "received_at": self.format_timestamp(current_time),
         }
         self.status = "ok"

@@ -4,6 +4,7 @@
     ".": {
       "release-type": "python",
       "include-component-in-tag": false,
+      "extra-files": ["app/version.py"],
       "bump-minor-pre-major": true,
       "draft": false,
       "prerelease": false,

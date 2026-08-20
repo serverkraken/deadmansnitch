@@ -57,7 +57,7 @@ class WatchdogService:
     @contextlib.contextmanager
     def atomic_update(self) -> Generator[WatchdogState, None, None]:
         """Context manager for atomic state updates with file locking"""
-        filepath = os.path.join(self.repository.data_dir, self.repository.filename)
+        filepath = self.repository.filepath
         lock_file = f"{filepath}.lock"
 
         # 1. Acquire process lock
@@ -118,14 +118,30 @@ class WatchdogService:
             # Valid watchdog alert received - update state
             was_in_alert = state.status == "alert"
             state.record_watchdog_alert(alert)
-            send_recovery = was_in_alert
+            if was_in_alert:
+                # Mark before the network send: if the send fails (or this
+                # process dies mid-send), the monitor retries the recovery
+                state.recovery_pending = True
+            send_recovery = was_in_alert or state.recovery_pending
 
         # Network I/O happens after the state locks are released
         if send_recovery:
             logger.info("Watchdog alert received after previous failure - sending recovery notification")
-            self.notifier.send_recovery()
+            if self.notifier.send_recovery():
+                self._clear_recovery_pending()
+            else:
+                logger.error("Failed to deliver recovery notification - monitor will retry")
 
         return True, "Watchdog alert received and processed"
+
+    def _clear_recovery_pending(self) -> None:
+        """Best-effort: if this fails, the monitor may send one duplicate
+        recovery, which beats never sending one"""
+        try:
+            with self.atomic_update() as state:
+                state.recovery_pending = False
+        except Exception as e:
+            logger.error(f"Could not clear recovery_pending: {e}")
 
     def _find_watchdog_alert(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Return the first alert matching the expected alertname, if any"""

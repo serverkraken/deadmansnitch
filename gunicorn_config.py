@@ -12,12 +12,8 @@ configure_global_logging()  # Explizit die globale Logger-Konfiguration aufrufen
 # Gunicorn-spezifische Konfiguration
 loglevel = log_level_name.lower()  # Gunicorn verwendet Kleinbuchstaben
 
-from app.config import Config  # noqa: E402
-from app.notifications.notifier import Notifier  # noqa: E402
-from app.notifications.providers.google_chat import GoogleChatProvider  # noqa: E402
-from app.persistence.file_repository import FileWatchdogRepository  # noqa: E402
+from app.bootstrap import build_services  # noqa: E402
 from app.services.watchdog_monitor import WatchdogMonitor  # noqa: E402
-from app.services.watchdog_service import WatchdogService  # noqa: E402
 
 # Gunicorn configuration for production environments
 bind = "0.0.0.0:5001"
@@ -28,8 +24,13 @@ timeout = 120
 
 
 class HealthCheckFilter(logging.Filter):
+    # /probe/* is polled by Kubernetes, /health by the Docker healthcheck -
+    # together thousands of access-log lines per day
+    QUIET_PATHS = ("GET /probe/", "GET /health")
+
     def filter(self, record: logging.LogRecord) -> bool:
-        if "GET /probe/" in record.getMessage():
+        message = record.getMessage()
+        if any(path in message for path in self.QUIET_PATHS):
             return os.getenv("LOG_LEVEL", "info").upper() == "DEBUG"
         return True
 
@@ -92,28 +93,7 @@ def when_ready(server: Any) -> None:
     if not monitor_thread_started:
         server.log.info("Initializing and starting watchdog monitor thread in when_ready hook")
 
-        # Initialize configuration
-        config = Config.get_instance()
-
-        # Initialize persistence
-        # Initialize persistence
-        repository = FileWatchdogRepository(
-            config.data_dir,
-            os.path.basename(config.persistence_file),
-            log_interval=float(config.watchdog_timeout),
-        )
-
-        # Initialize notification system
-        notifier = Notifier()
-
-        # Add notification providers if configured
-        if config.google_chat_webhook_url:
-            google_chat = GoogleChatProvider(config.google_chat_webhook_url)
-            notifier.add_provider(google_chat)
-
-        # Initialize watchdog service
-        watchdog_service = WatchdogService.get_instance(repository, notifier, config)
-        watchdog_service.initialize()
+        config, notifier, watchdog_service = build_services()
 
         # Start monitor thread
         monitor = WatchdogMonitor(watchdog_service, notifier, config)

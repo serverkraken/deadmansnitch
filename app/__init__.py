@@ -3,46 +3,23 @@ import os
 
 from flask import Flask
 
-from app.config import Config
+from app.bootstrap import build_services
 from app.logging_setup import configure_global_logging
-from app.notifications.notifier import Notifier
-from app.notifications.providers.google_chat import GoogleChatProvider
-from app.persistence.file_repository import FileWatchdogRepository
 from app.services.watchdog_monitor import WatchdogMonitor
-from app.services.watchdog_service import WatchdogService
 from app.web.routes import init_routes
 
 
 def create_app() -> Flask:
     """Application factory"""
-    # Initialize configuration
-    config = Config.get_instance()
     configure_global_logging()
     logger = logging.getLogger("watchdog_service")
 
-    # Initialize persistence
-    # Initialize persistence
-    repository = FileWatchdogRepository(
-        config.data_dir,
-        os.path.basename(config.persistence_file),
-        log_interval=float(config.watchdog_timeout),
-    )
-
-    # Initialize notification system
-    notifier = Notifier()
-
-    # Add notification providers if configured
-    if config.google_chat_webhook_url:
-        google_chat = GoogleChatProvider(config.google_chat_webhook_url)
-        notifier.add_provider(google_chat)
-
-    # Initialize watchdog service
-    watchdog_service = WatchdogService.get_instance(repository, notifier, config)
-    # Always initialize the service to ensure state is loaded
-    watchdog_service.initialize()
+    config, notifier, watchdog_service = build_services()
 
     # Create Flask application
     app = Flask(__name__)
+    # Reject oversized bodies before they can occupy worker threads or RAM
+    app.config["MAX_CONTENT_LENGTH"] = config.max_content_length
 
     # Register routes
     app.register_blueprint(init_routes(watchdog_service))

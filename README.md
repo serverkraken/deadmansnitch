@@ -19,8 +19,11 @@ The application is configured via environment variables.
 | `EXPECTED_ALERTNAME` | `Watchdog` | The alert name to listen for in the webhook payload. |
 | `ALERT_RESEND_INTERVAL` | `21600` | Time in seconds between repeat notifications if the issue persists (6 hours). |
 | `GOOGLE_CHAT_WEBHOOK_URL`| `None` | **Required**. Webhook URL for Google Chat notifications. |
-| `LOG_LEVEL` | `DEBUG` | Logging level. |
+| `LOG_LEVEL` | `INFO` | Logging level. |
 | `DATA_DIR` | `/app/data` | Directory for storing persistent state. |
+| `WATCHDOG_AUTH_TOKEN` | `None` | Optional shared secret. When set, `POST /watchdog` requires `Authorization: Bearer <token>` (configure via Alertmanager's `http_config.authorization`). |
+| `MONITOR_INTERVAL` | `15` | Monitor tick cadence in seconds. |
+| `MAX_CONTENT_LENGTH` | `65536` | Maximum accepted webhook body size in bytes. |
 
 ## Prometheus Setup
 

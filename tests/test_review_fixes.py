@@ -75,7 +75,9 @@ class TestAlertOnlyMarkedNotifiedOnSuccess:
         assert persisted.last_alert_notification == 0
         assert persisted.status == "ok"
 
-    def test_failed_send_is_retried(self, monitor: WatchdogMonitor, service: WatchdogService) -> None:
+    def test_failed_send_is_retried(
+        self, monitor: WatchdogMonitor, service: WatchdogService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         now = time.time()
         _set_state(service, last_watchdog_time=now - 120, status="ok")
         monitor.notifier.send_alert.return_value = False  # type: ignore[attr-defined]
@@ -84,8 +86,11 @@ class TestAlertOnlyMarkedNotifiedOnSuccess:
         # Within the retry throttle window: no second attempt yet
         monitor._tick(now + 1)
         assert monitor.notifier.send_alert.call_count == 1  # type: ignore[attr-defined]
-        # After the throttle window the send is retried
-        monitor._tick(now + WatchdogMonitor.SEND_RETRY_INTERVAL + 1)
+        # After the throttle window (monotonic clock) the send is retried
+        real_monotonic = time.monotonic
+        offset = WatchdogMonitor.SEND_RETRY_INTERVAL + 1
+        monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + offset)
+        monitor._tick(now + offset)
         assert monitor.notifier.send_alert.call_count == 2  # type: ignore[attr-defined]
 
     def test_successful_send_marks_notified(self, monitor: WatchdogMonitor, service: WatchdogService) -> None:
@@ -215,7 +220,7 @@ class TestMonitorHeartbeat:
     def test_readiness_fails_on_dead_monitor_even_after_5_minutes(self, service: WatchdogService) -> None:
         """The old 300s 'temporary workaround' must not override a dead monitor."""
         probes = KubernetesProbes(service)
-        probes.startup_time = time.time() - 400
+        probes.startup_time = time.monotonic() - 400
         _set_state(service, status="ok", last_watchdog_time=time.time())
         service.state = service.repository.load()
 
