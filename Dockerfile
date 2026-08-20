@@ -1,3 +1,22 @@
+# Build stage: Poetry and its dependency tree stay here and never
+# reach the runtime image
+FROM python:3.14-slim AS builder
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir poetry
+
+# Copy dependency files
+COPY pyproject.toml poetry.lock ./
+
+# Install runtime dependencies into an in-project venv (/app/.venv) so it
+# can be copied into the runtime stage as a single unit. no-pip keeps pip
+# (and its vendored msgpack/setuptools copies) out of the venv.
+RUN poetry config virtualenvs.in-project true \
+  && poetry config virtualenvs.options.no-pip true \
+  && poetry install --without dev --no-interaction --no-ansi
+
+# Runtime stage
 FROM python:3.14-slim
 
 # Create non-root user for security
@@ -6,22 +25,20 @@ RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
 # Set work directory
 WORKDIR /app
 
-# Install Poetry and dependencies
-# We use curl for healthcheck and pip to install poetry
 # apt-get upgrade pulls Debian security patches the base image doesn't ship yet
+# We use curl for the healthcheck
+# pip is removed: the runtime never installs packages, and pip's vendored
+# copies (pip/_vendor/vendor.txt) trip image scanners
 RUN apt-get update && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends \
   curl \
-  && pip install poetry \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && python -m pip uninstall -y pip
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
-
-# Install dependencies
-# Disable virtualenvs validation since we are in a container
-RUN poetry config virtualenvs.create false \
-  && poetry install --without dev --no-interaction --no-ansi
+# Copy the prepared dependency venv from the build stage
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH" \
+  VIRTUAL_ENV="/app/.venv"
 
 # Copy application code
 COPY app/ /app/app/
