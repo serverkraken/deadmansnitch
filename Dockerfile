@@ -8,7 +8,9 @@ WORKDIR /app
 
 # Install Poetry and dependencies
 # We use curl for healthcheck and pip to install poetry
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# apt-get upgrade pulls Debian security patches the base image doesn't ship yet
+RUN apt-get update && apt-get upgrade -y \
+  && apt-get install -y --no-install-recommends \
   curl \
   && pip install poetry \
   && rm -rf /var/lib/apt/lists/*
