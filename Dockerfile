@@ -1,10 +1,15 @@
+# Single source of truth for the Python version: the copied venv hardcodes
+# lib/python3.X paths, so builder and runtime must never drift apart
+ARG PYTHON_IMAGE=python:3.14-slim
+
 # Build stage: Poetry and its dependency tree stay here and never
 # reach the runtime image
-FROM python:3.14-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir poetry
+# Pinned to the version that wrote poetry.lock
+RUN pip install --no-cache-dir poetry==2.4.1
 
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
@@ -12,12 +17,14 @@ COPY pyproject.toml poetry.lock ./
 # Install runtime dependencies into an in-project venv (/app/.venv) so it
 # can be copied into the runtime stage as a single unit. no-pip keeps pip
 # (and its vendored msgpack/setuptools copies) out of the venv.
+# --compile pre-builds bytecode: the runtime venv is root-owned and
+# PYTHONDONTWRITEBYTECODE is set, so it can never be compiled later
 RUN poetry config virtualenvs.in-project true \
   && poetry config virtualenvs.options.no-pip true \
-  && poetry install --without dev --no-interaction --no-ansi
+  && poetry install --without dev --no-interaction --no-ansi --compile
 
 # Runtime stage
-FROM python:3.14-slim
+FROM ${PYTHON_IMAGE}
 
 # Create non-root user for security
 RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
@@ -26,14 +33,15 @@ RUN groupadd -r deadmansnitch && useradd -r -g deadmansnitch deadmansnitch
 WORKDIR /app
 
 # apt-get upgrade pulls Debian security patches the base image doesn't ship yet
-# We use curl for the healthcheck
 # pip is removed: the runtime never installs packages, and pip's vendored
-# copies (pip/_vendor/vendor.txt) trip image scanners
+# copies (pip/_vendor/vendor.txt) trip image scanners. The ensurepip
+# directory must go too, or `python -m ensurepip` restores pip from the
+# bundled wheel at runtime
 RUN apt-get update && apt-get upgrade -y \
-  && apt-get install -y --no-install-recommends \
-  curl \
   && rm -rf /var/lib/apt/lists/* \
-  && python -m pip uninstall -y pip
+  && python -m pip uninstall -y pip \
+  && d="$(python -c 'import ensurepip, os; print(os.path.dirname(ensurepip.__file__))')" \
+  && test -n "$d" && rm -rf "$d"
 
 # Copy the prepared dependency venv from the build stage
 COPY --from=builder /app/.venv /app/.venv
@@ -66,9 +74,18 @@ EXPOSE 5001
 # Switch to non-root user
 USER deadmansnitch
 
-# Health check
+# Fail the build (not the deploy) if the shipped code doesn't run here:
+# importing the app package pulls the full dependency closure, and running
+# as deadmansnitch after the ENV block also catches unreadable venv files
+# without writing bytecode into the layer
+RUN python -c "import app, gunicorn, setproctitle"
+
+# Health check via stdlib instead of curl: opening with an empty
+# ProxyHandler ignores injected HTTP_PROXY env (as curl did for http://),
+# and the request raises on HTTP >= 400 and on connection failure, so the
+# CMD exits non-zero without extra CVE-prone packages in the image
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5001/health || exit 1
+  CMD python -c "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://localhost:5001/health', timeout=25)"
 
 # Add metadata labels
 LABEL maintainer="ServerKraken Team" \
