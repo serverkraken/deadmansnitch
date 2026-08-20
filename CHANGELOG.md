@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/serverkraken/deadmansnitch/compare/v0.1.1...v0.1.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docker:** apply Debian security upgrades during image build ([#68](https://github.com/serverkraken/deadmansnitch/issues/68)) ([8cd4204](https://github.com/serverkraken/deadmansnitch/commit/8cd4204b1cea500ca5d0c9fa0544956c35dab3ce))
+
 ## [0.1.1](https://github.com/serverkraken/deadmansnitch/compare/v0.1.0...v0.1.1) (2026-08-20)
 
 
