@@ -105,14 +105,14 @@ class TestRecoveryNotificationDelivery:
 
     def test_failed_service_recovery_marks_pending(self, service: WatchdogService) -> None:
         self._put_in_alert(service)
-        service.notifier.send_recovery.return_value = False
+        service.notifier.send_recovery.return_value = False  # type: ignore[attr-defined]
         success, _ = service.process_watchdog_alert(_watchdog_payload())
         assert success
         assert service.repository.load().recovery_pending is True
 
     def test_successful_service_recovery_clears_pending(self, service: WatchdogService) -> None:
         self._put_in_alert(service)
-        service.notifier.send_recovery.return_value = True
+        service.notifier.send_recovery.return_value = True  # type: ignore[attr-defined]
         service.process_watchdog_alert(_watchdog_payload())
         assert service.repository.load().recovery_pending is False
 
@@ -121,9 +121,9 @@ class TestRecoveryNotificationDelivery:
             state.last_watchdog_time = time.time()
             state.status = "ok"
             state.recovery_pending = True
-        monitor.notifier.send_recovery.return_value = True
+        monitor.notifier.send_recovery.return_value = True  # type: ignore[attr-defined]
         monitor._tick(time.time())
-        monitor.notifier.send_recovery.assert_called_once()
+        monitor.notifier.send_recovery.assert_called_once()  # type: ignore[attr-defined]
         assert service.repository.load().recovery_pending is False
 
     def test_monitor_keeps_pending_when_retry_fails(self, service: WatchdogService, monitor: WatchdogMonitor) -> None:
@@ -131,7 +131,7 @@ class TestRecoveryNotificationDelivery:
             state.last_watchdog_time = time.time()
             state.status = "ok"
             state.recovery_pending = True
-        monitor.notifier.send_recovery.return_value = False
+        monitor.notifier.send_recovery.return_value = False  # type: ignore[attr-defined]
         monitor._tick(time.time())
         assert service.repository.load().recovery_pending is True
 
@@ -142,9 +142,9 @@ class TestRecoveryNotificationDelivery:
         # webhook never saw status "alert", so only the monitor can recover.
         monitor._alert_active = True
         monitor._alert_persisted = False
-        monitor.notifier.send_recovery.return_value = True
+        monitor.notifier.send_recovery.return_value = True  # type: ignore[attr-defined]
         monitor._tick(time.time())
-        monitor.notifier.send_recovery.assert_called_once()
+        monitor.notifier.send_recovery.assert_called_once()  # type: ignore[attr-defined]
         assert monitor._alert_active is False
 
     def test_monitor_skips_recovery_when_service_already_handled_it(
@@ -155,7 +155,7 @@ class TestRecoveryNotificationDelivery:
         monitor._alert_active = True
         monitor._alert_persisted = True
         monitor._tick(time.time())
-        monitor.notifier.send_recovery.assert_not_called()
+        monitor.notifier.send_recovery.assert_not_called()  # type: ignore[attr-defined]
         assert monitor._alert_active is False
 
     def test_race_ping_during_alert_send_marks_recovery_pending(
@@ -190,23 +190,23 @@ class TestStatusUpdateRetryGate:
         self, service: WatchdogService, monitor: WatchdogMonitor
     ) -> None:
         self._age_status(service)
-        monitor.notifier.send_status_update.return_value = False
+        monitor.notifier.send_status_update.return_value = False  # type: ignore[attr-defined]
         monitor._tick(time.time())
         monitor._tick(time.time())
-        assert monitor.notifier.send_status_update.call_count == 1
+        assert monitor.notifier.send_status_update.call_count == 1  # type: ignore[attr-defined]
 
     def test_failed_status_send_is_retried_after_interval(
         self, service: WatchdogService, monitor: WatchdogMonitor, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._age_status(service)
-        monitor.notifier.send_status_update.return_value = False
+        monitor.notifier.send_status_update.return_value = False  # type: ignore[attr-defined]
         monitor._tick(time.time())
         # Advance the monotonic clock past the retry interval
         real_monotonic = time.monotonic
         offset = WatchdogMonitor.SEND_RETRY_INTERVAL + 1
         monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + offset)
         monitor._tick(time.time())
-        assert monitor.notifier.send_status_update.call_count == 2
+        assert monitor.notifier.send_status_update.call_count == 2  # type: ignore[attr-defined]
 
 
 class TestMonitorTickInterval:
