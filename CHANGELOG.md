@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/serverkraken/deadmansnitch/compare/v0.1.0...v0.1.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* resolve 10 confirmed findings from the main-branch code review ([#65](https://github.com/serverkraken/deadmansnitch/issues/65)) ([aa0f4b6](https://github.com/serverkraken/deadmansnitch/commit/aa0f4b64a7fc853f7536c38467f0fb7a98e45154))
+
 ## 0.1.0 (2026-08-18)
 
 
