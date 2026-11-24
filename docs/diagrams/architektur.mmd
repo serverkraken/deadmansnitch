@@ -1,0 +1,10 @@
+flowchart LR
+    P["Prometheus<br/>Regel Watchdog feuert immer"] --> A["Alertmanager<br/>wiederholt jede Minute"]
+    A -- "Webhook POST /watchdog" --> W["Webhook-Empfang<br/>prüft Token und Alertname"]
+    subgraph D["Deadmansnitch"]
+        W --> S[("Zustandsdatei<br/>letzter Herzschlag")]
+        M["Überwacher<br/>prüft alle 15 s"] --> S
+        K["Status und Probes<br/>/health · /status · /probe"] --> S
+    end
+    M -- "Alarm, Wiederholung,<br/>Entwarnung, Tagesmeldung" --> G["Google Chat"]
+    O["Kubernetes / Uptime-Check"] --> K

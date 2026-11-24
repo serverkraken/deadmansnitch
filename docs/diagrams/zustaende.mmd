@@ -1,0 +1,12 @@
+stateDiagram-v2
+    direction LR
+    [*] --> Warten: Start ohne Zustandsdatei
+    Warten: Warten auf ersten Herzschlag
+    OK: OK – Herzschläge kommen an
+    Alarm: Alarm – Pipeline vermutlich kaputt
+    Warten --> OK: Watchdog empfangen
+    OK --> OK: Watchdog empfangen
+    OK --> Alarm: Zeitlimit überschritten (Standard 1 h)
+    Warten --> Alarm: Zeitlimit überschritten
+    Alarm --> Alarm: Erinnerung alle 6 h
+    Alarm --> OK: Watchdog empfangen, Entwarnung
