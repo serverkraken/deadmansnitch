@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/serverkraken/deadmansnitch/compare/v0.1.4...v0.1.5) (2026-11-24)
+
+
+### Documentation
+
+* README mit Architektur-Diagramm ([#75](https://github.com/serverkraken/deadmansnitch/issues/75)) ([7fd867c](https://github.com/serverkraken/deadmansnitch/commit/7fd867c0d9af62633366fc70337bed5b754972d4))
+
 ## [0.1.4](https://github.com/serverkraken/deadmansnitch/compare/v0.1.3...v0.1.4) (2026-08-20)
 
 
