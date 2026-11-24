@@ -1,37 +1,133 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Deadmansnitch-Logo" width="160">
+</p>
+
 # Deadmansnitch
 
-Deadmansnitch is a specialized monitoring tool designed to act as a "Dead Man's Switch" for your Prometheus monitoring pipeline. It ensures that your entire alerting chain—from Prometheus to Alertmanager—is functional.
+[![ci](https://github.com/serverkraken/deadmansnitch/actions/workflows/ci.yml/badge.svg)](https://github.com/serverkraken/deadmansnitch/actions/workflows/ci.yml)
+[![release](https://github.com/serverkraken/deadmansnitch/actions/workflows/release.yml/badge.svg)](https://github.com/serverkraken/deadmansnitch/actions/workflows/release.yml)
+![Release](https://img.shields.io/github/v/release/serverkraken/deadmansnitch)
+![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue)
 
-## How it Works
+Deadmansnitch ist ein Totmannschalter für die Prometheus-Alarmkette: Der Dienst
+wartet auf einen regelmäßigen Herzschlag von Alertmanager und schlägt auf einem
+unabhängigen Weg (Google Chat) Alarm, sobald dieser Herzschlag ausbleibt.
 
-1.  **Prometheus** is configured to fire a continuous "Watchdog" alert (always firing).
-2.  **Alertmanager** receives this alert and repeatedly sends it to **Deadmansnitch** via a webhook.
-3.  **Deadmansnitch** listens for these heartbeats. roughly every minute (or however you configure the `repeat_interval` in Alertmanager).
-4.  If **Deadmansnitch** stops receiving these heartbeats for a configured period (default: 1 hour), it assumes the monitoring pipeline is broken and sends an out-of-band notification (e.g., to Google Chat).
+## Überblick
 
-## Configuration
+Ein Monitoring, das selbst ausfällt, meldet nichts, und genau das fällt
+niemandem auf. Fällt Prometheus aus, hängt Alertmanager oder ist die
+Weiterleitung falsch konfiguriert, bleibt es einfach still. Deadmansnitch
+dreht die Logik um: Nicht der Alarm ist das Signal, sondern sein Ausbleiben.
 
-The application is configured via environment variables.
+Prometheus feuert dazu dauerhaft einen Alarm namens `Watchdog`. Alertmanager
+leitet ihn etwa jede Minute per Webhook an Deadmansnitch weiter. Solange diese
+Herzschläge ankommen, ist die ganze Kette von der Regelauswertung bis zum
+Versand nachweislich intakt. Kommt eine Stunde lang (einstellbar) nichts an,
+schickt Deadmansnitch eine Nachricht nach Google Chat, also an Prometheus und
+Alertmanager vorbei.
 
-| Variable | Default | Description |
+Der Dienst ist bewusst klein gehalten: eine Flask-Anwendung unter Gunicorn, ein
+Hintergrund-Überwacher und eine JSON-Zustandsdatei. Eine Datenbank braucht er
+nicht. Weil er auch nach einem Neustart weiß, wann der letzte Herzschlag kam,
+verlängert ein Neustart während eines Ausfalls die Erkennungszeit nicht.
+
+## Features
+
+- **Herzschlag-Empfang** über `POST /watchdog` im Standard-Webhook-Format von
+  Alertmanager. Auch gruppierte Payloads werden erkannt, wenn der Watchdog
+  darin an beliebiger Stelle steht.
+- **Alarm bei Stille:** Nach `WATCHDOG_TIMEOUT` Sekunden ohne Herzschlag geht
+  eine Fehlermeldung nach Google Chat, danach alle `ALERT_RESEND_INTERVAL`
+  Sekunden eine Erinnerung.
+- **Entwarnung:** Kommt der Herzschlag zurück, folgt eine Recovery-Nachricht.
+  Scheitert deren Versand, versucht der Überwacher es erneut.
+- **Tägliche Statusmeldung**, solange alles in Ordnung ist. So fällt auch ein
+  kaputter Benachrichtigungskanal auf.
+- **Resolved-Meldungen zählen nicht:** Ein aufgelöster Watchdog bedeutet, dass
+  die Pipeline aufgehört hat zu feuern. Er wird ignoriert und setzt den Timer
+  nicht zurück.
+- **Optionaler Token-Schutz:** Mit `WATCHDOG_AUTH_TOKEN` verlangt der Endpunkt
+  `Authorization: Bearer <token>`. Fremde Clients können dann keine
+  Herzschläge fälschen und den Schalter so stummschalten.
+- **Robuster Zustand:** Die Zustandsdatei wird atomar geschrieben (temporäre
+  Datei, `fsync`, Umbenennen) und per Dateisperre geschützt. Eine beschädigte
+  Datei wird zur Analyse als `.corrupt` aufbewahrt.
+- **Kubernetes-tauglich:** eigene Liveness- und Readiness-Probes, die auch
+  prüfen, ob der Überwacher noch lebt und das Datenverzeichnis beschreibbar ist.
+
+## Architektur
+
+Das Bild zeigt den Weg des Herzschlags und die drei Teile im Dienst, die sich
+eine Zustandsdatei teilen.
+
+![Architektur](docs/diagrams/architektur.png)
+
+- **Prometheus und Alertmanager** liefern den Herzschlag. Eine Regel mit
+  `expr: vector(1)` feuert immer, und Alertmanager wiederholt sie in kurzem
+  Abstand an den Webhook.
+- **Webhook-Empfang** (`POST /watchdog`) prüft den optionalen Token, sucht
+  den erwarteten Alertnamen (`EXPECTED_ALERTNAME`) und vermerkt den Zeitpunkt
+  in der Zustandsdatei. Fremde Alarme werden mit `400` abgewiesen, damit eine
+  Fehlkonfiguration in den Metriken von Alertmanager sichtbar wird.
+- **Zustandsdatei** (`watchdog_state.json` in `DATA_DIR`) enthält den letzten
+  Herzschlag, den aktuellen Status, Zähler und die Zeitpunkte der letzten
+  Benachrichtigungen. Sie überlebt Neustarts, deshalb gehört `DATA_DIR` auf ein
+  persistentes Volume.
+- **Überwacher** ist ein Hintergrund-Thread, der alle `MONITOR_INTERVAL`
+  Sekunden nachsieht, wie alt der letzte Herzschlag ist, und die
+  Benachrichtigungen verschickt. Unter Gunicorn startet er genau einmal im
+  Master-Prozess. Seinen eigenen Herzschlag schreibt er in die Datei
+  `monitor_heartbeat`, die die Readiness-Probe auswertet.
+- **Status und Probes** lesen nur den Zustand und verändern ihn nie.
+- **Google Chat** ist der unabhängige Meldeweg. Die Benachrichtigung ist über
+  Provider gekapselt, Google Chat ist derzeit der einzige.
+
+Der Status durchläuft dabei wenige Zustände:
+
+![Zustände](docs/diagrams/zustaende.png)
+
+Nach einem Neustart bekommt die Pipeline nur noch den Rest ihres Zeitfensters,
+kein neues: Lag der letzte Herzschlag schon 50 Minuten zurück, schlägt
+Deadmansnitch bei einer Stunde Timeout nach 10 Minuten Alarm.
+
+## Installation & Nutzung
+
+### Container
+
+Bei jedem Release baut die CI ein Image nach
+`ghcr.io/serverkraken/deadmansnitch`, getaggt mit der Release-Version. Es läuft
+als Nicht-root-Benutzer, lauscht auf Port `5001`, legt seinen Zustand im Volume
+`/app/data` ab und bringt einen eigenen `HEALTHCHECK` mit.
+
+```bash
+docker build -t deadmansnitch .
+docker run -p 5001:5001 \
+  -v deadmansnitch-data:/app/data \
+  -e GOOGLE_CHAT_WEBHOOK_URL="<webhook-url>" \
+  deadmansnitch
+```
+
+### Konfiguration
+
+Alle Einstellungen kommen aus Umgebungsvariablen.
+
+| Variable | Standard | Bedeutung |
 | :--- | :--- | :--- |
-| `WATCHDOG_TIMEOUT` | `3600` | Time in seconds without a heartbeat before sending an alert (1 hour). |
-| `EXPECTED_ALERTNAME` | `Watchdog` | The alert name to listen for in the webhook payload. |
-| `ALERT_RESEND_INTERVAL` | `21600` | Time in seconds between repeat notifications if the issue persists (6 hours). |
-| `GOOGLE_CHAT_WEBHOOK_URL`| `None` | **Required**. Webhook URL for Google Chat notifications. |
-| `LOG_LEVEL` | `INFO` | Logging level. |
-| `DATA_DIR` | `/app/data` | Directory for storing persistent state. |
-| `WATCHDOG_AUTH_TOKEN` | `None` | Optional shared secret. When set, `POST /watchdog` requires `Authorization: Bearer <token>` (configure via Alertmanager's `http_config.authorization`). |
-| `MONITOR_INTERVAL` | `15` | Monitor tick cadence in seconds. |
-| `MAX_CONTENT_LENGTH` | `65536` | Maximum accepted webhook body size in bytes. |
+| `WATCHDOG_TIMEOUT` | `3600` | Sekunden ohne Herzschlag, bis Alarm ausgelöst wird (1 Stunde). |
+| `EXPECTED_ALERTNAME` | `Watchdog` | Alertname, der als Herzschlag zählt. |
+| `ALERT_RESEND_INTERVAL` | `21600` | Abstand der Erinnerungen in Sekunden, solange der Alarm anhält (6 Stunden). |
+| `GOOGLE_CHAT_WEBHOOK_URL` | – | Webhook für Google Chat. Ohne ihn läuft der Dienst, verschickt aber keine Benachrichtigungen. |
+| `WATCHDOG_AUTH_TOKEN` | – | Optionales gemeinsames Geheimnis. Ist es gesetzt, verlangt `POST /watchdog` den Header `Authorization: Bearer <token>`. |
+| `LOG_LEVEL` | `INFO` | Log-Level. Zugriffe auf `/health` und `/probe/*` erscheinen nur bei `DEBUG` im Access-Log. |
+| `DATA_DIR` | `/app/data` | Verzeichnis für Zustandsdatei, Sperrdatei und Überwacher-Herzschlag. |
+| `MONITOR_INTERVAL` | `15` | Takt des Überwachers in Sekunden. |
+| `MAX_CONTENT_LENGTH` | `65536` | Maximale Größe eines Webhook-Bodys in Bytes; größere Anfragen enden mit `413`. |
 
-## Prometheus Setup
+### Prometheus einrichten
 
-To utilize Deadmansnitch, you need to configure both Prometheus and Alertmanager.
-
-### 1. Prometheus Configuration (`prometheus.yml`)
-
-Add a rule that always fires. This is often unrelated to any specific target but ensures Prometheus itself is running and evaluating rules.
+Eine Regel, die immer feuert. Sie hängt an keinem Ziel und belegt nur, dass
+Prometheus läuft und Regeln auswertet.
 
 ```yaml
 groups:
@@ -45,9 +141,11 @@ groups:
           severity: none
 ```
 
-### 2. Alertmanager Configuration (`alertmanager.yml`)
+### Alertmanager einrichten
 
-Configure a receiver that sends a webhook to Deadmansnitch.
+Ein Receiver, der den Watchdog an Deadmansnitch schickt, und eine Route mit
+kurzem `repeat_interval`, damit der Herzschlag häufig genug kommt. Ist
+`WATCHDOG_AUTH_TOKEN` gesetzt, gehört der Token in `http_config.authorization`.
 
 ```yaml
 receivers:
@@ -55,54 +153,41 @@ receivers:
     webhook_configs:
       - url: 'http://<deadmansnitch-host>:5001/watchdog'
         send_resolved: true
+        # nur bei gesetztem WATCHDOG_AUTH_TOKEN:
+        # http_config:
+        #   authorization:
+        #     credentials: '<token>'
 
 route:
   routes:
-    # Route the Watchdog alert to Deadmansnitch
-    - match:
-        alertname: Watchdog
+    - matchers:
+        - alertname = Watchdog
       receiver: 'deadmansnitch-receiver'
       group_wait: 0s
       group_interval: 1m
-      repeat_interval: 1m  # Send frequently to keep the switch alive
+      repeat_interval: 1m
 ```
 
-## API Endpoints
+Ein Beispiel für die Payload, die Alertmanager dabei schickt, liegt in
+[`example_alertmanager.json`](example_alertmanager.json).
 
-### Core Functionality
+### Endpunkte
 
--   **`POST /watchdog`**
-    -   **Description**: The webhook endpoint for Alertmanager. Receives the "Watchdog" alert payload.
-    -   **Payload**: Standard Alertmanager JSON payload.
+| Methode und Pfad | Zweck |
+| :--- | :--- |
+| `POST /watchdog` | Webhook für Alertmanager. `200` bei gültigem Herzschlag, `400` bei fremdem oder ungültigem Alarm, `401` bei falschem Token, `413` bei zu großem Body. |
+| `GET /health` | `200`, solange Herzschläge ankommen oder der Dienst noch auf den ersten wartet, sonst `503`. Gedacht für externe Uptime-Checks. |
+| `GET /status` | Ausführlicher Zustand: Zähler, letzter Herzschlag mit Details, letzte Benachrichtigungen und die aktive Konfiguration. |
+| `GET /probe/liveness` | Kubernetes-Liveness: Ist der Dienst initialisiert und vollständig verdrahtet? |
+| `GET /probe/readiness` | Kubernetes-Readiness: nach 30 Sekunden Anlaufzeit, mit beschreibbarem Datenverzeichnis und einem Überwacher-Herzschlag, der jünger als 90 Sekunden ist. |
+| `GET /` | Dienstname, Version und Liste der Endpunkte. |
 
-### Monitoring & Status
+## Entwicklung
 
--   **`GET /health`**
-    -   **Description**: Health check endpoint. Returns `200 OK` if the service is receiving heartbeats (or is in startup grace period), `503 Service Unavailable` otherwise.
-    -   **Use Case**: External status/uptime monitoring.
+### Voraussetzungen
 
--   **`GET /status`**
-    -   **Description**: Detailed internal status, including counters, last received timestamp, and config.
-
--   **`GET /probe/liveness`**
-    -   **Description**: Kubernetes liveness probe. Checks if the service is running and dependencies are initialized.
-
--   **`GET /probe/readiness`**
-    -   **Description**: Kubernetes readiness probe. Checks if the service is ready to traffic.
-
--   **`GET /`**
-    -   **Description**: Returns service version and a list of available endpoints.
-
-## Development
-
-### Prerequisites
-
--   Python >= 3.10
--   [Poetry](https://python-poetry.org/) (Dependency Management)
-
-### Setup
-
-Clone the repository and install dependencies:
+- Python 3.10 oder neuer (das Container-Image nutzt `python:3.14-slim`)
+- [Poetry](https://python-poetry.org/) für die Abhängigkeiten
 
 ```bash
 git clone https://github.com/serverkraken/deadmansnitch.git
@@ -110,48 +195,62 @@ cd deadmansnitch
 poetry install
 ```
 
-### Running Tests
+### Lokal starten
 
-We use `pytest` for testing.
-
-```bash
-poetry run pytest
-```
-
-To run with coverage:
+So startet der Dienst wie im Container, nur mit einem lokalen Datenverzeichnis:
 
 ```bash
-poetry run pytest --cov=app tests/
+DATA_DIR=./data poetry run gunicorn -c gunicorn_config.py "app:create_app()"
 ```
 
-### Code Quality
+Gunicorn läuft mit genau einem Worker (zwei Threads), weil es nur einen
+Überwacher geben darf.
 
-We use `ruff` for linting and formatting, and `mypy` for static type checking.
-
-**Format code:**
-```bash
-poetry run ruff format .
-```
-
-**Lint code:**
-```bash
-poetry run ruff check --fix .
-```
-
-**Type check:**
-```bash
-poetry run mypy .
-```
-
-## Deployment
-
-### Docker
+### Tests und Codequalität
 
 ```bash
-docker build -t deadmansnitch .
-docker run -p 5001:5001 -e GOOGLE_CHAT_WEBHOOK_URL="your-url" deadmansnitch
+poetry run pytest                      # Tests
+poetry run pytest --cov=app tests/     # mit Coverage
+poetry run ruff format .               # formatieren
+poetry run ruff check --fix .          # linten
+poetry run mypy .                      # Typprüfung (strict)
 ```
 
-### Docker Compose
+Formatierung, Lint und Typprüfung laufen zusätzlich als `pre-commit`-Hooks
+(siehe `.pre-commit-config.yaml`).
 
-See `docker-compose.yml` for a deployment example.
+### Codeaufbau
+
+Die Schichten unter `app/` sind klar getrennt:
+
+- `domain/` – der Zustand (`WatchdogState`) ohne jede Infrastruktur
+- `persistence/` – Repository-Schnittstelle und dateibasierte Umsetzung
+- `services/` – Herzschlag-Verarbeitung, Überwacher-Thread und Kubernetes-Probes
+- `notifications/` – Nachrichtentexte, Notifier und Provider (Google Chat)
+- `web/` – die Flask-Routen
+- `bootstrap.py` – die einzige Stelle, an der alles zusammengesteckt wird
+
+### CI und Releases
+
+- **ci** (bei jedem Pull Request): Trivy-Scan des Dateisystems, Python-Lint und
+  Tests mit einer Mindest-Coverage von 80 %.
+- **release** (bei Push auf `main`): release-please pflegt Version und
+  `CHANGELOG.md`. Bei einem Release baut die CI das Image, signiert es,
+  erzeugt SBOM und Attestierung und scannt es mit Trivy.
+- **prerelease** (manuell): baut und scannt ein Vorab-Image.
+- **cleanup** (sonntags): räumt alte Images auf.
+
+Abhängigkeiten aktualisiert Renovate, einschließlich der in der `Dockerfile`
+gepinnten Poetry-Version.
+
+## Abhängigkeiten zu anderen Repos
+
+- [serverkraken/reusable-workflows](https://github.com/serverkraken/reusable-workflows)
+  stellt alle CI-Workflows bereit (`uses:`-Referenzen in `.github/workflows/`):
+  Lint, Tests, Trivy-Scans, Image-Build, Release und Aufräumen.
+
+Eingesetzt wird der Dienst per GitOps aus den Homelab-Repos von serverkraken:
+`homelab-mail-nue` betreibt Deadmansnitch, und der Alertmanager in
+`homelab-study` schickt ihm den Watchdog-Herzschlag. Weil beide in
+verschiedenen Clustern laufen, bemerkt Deadmansnitch auch den Ausfall des
+ganzen Monitoring-Clusters.
